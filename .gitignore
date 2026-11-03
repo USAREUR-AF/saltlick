@@ -1,0 +1,14 @@
+/saltlick
+/dist/
+*.db
+*.db-wal
+*.db-shm
+*.key
+
+# Terraform working state: the provider plugin cache alone is ~660 MB.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

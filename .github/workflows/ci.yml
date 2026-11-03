@@ -1,0 +1,94 @@
+name: ci
+
+# Builds and checks. It does not push images and it does not deploy: releasing
+# is a deliberate act by whoever runs an instance, not a side effect of merging.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race -count=1 ./...
+
+  image:
+    name: container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build only. Nothing is pushed to any registry from CI.
+      - name: docker build
+        run: docker build -t saltlick:${{ github.sha }} .
+
+      - name: the binary starts and answers /healthz
+        run: |
+          docker run -d --name saltlick-ci -p 8080:8080 \
+            -e SALTLICK_ADDR=":8080" -e SALTLICK_DB="/data/saltlick.db" \
+            -v saltlick-ci-data:/data \
+            saltlick:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then
+              echo "healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "never became healthy; container logs:"
+          docker logs saltlick-ci
+          exit 1
+
+      - name: clean up
+        if: always()
+        run: docker rm -f saltlick-ci >/dev/null 2>&1 || true
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform -chdir=terraform fmt -check -recursive -diff
+
+      # No credentials and no backend: this checks the configuration is
+      # well-formed, not that it would apply cleanly in any given account.
+      - name: validate
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate

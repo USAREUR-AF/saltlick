@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+# Nothing in this file is a secret; AWS credentials come from your environment
+# or profile, never from here.
+
+aws_region = "eu-west-1"
+image      = "ghcr.io/usareur-af/saltlick:v1.0.0"
+
+# A certificate for the internal hostname you will serve the directory on,
+# usually your own CA's, imported into ACM in this region.
+certificate_arn = "arn:aws:acm:eu-west-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+# The service is internal. Once the VPC is attached to the network your
+# operators and coalition members come from, list those ranges here. Until
+# then, only the VPC itself can reach it.
+# allowed_cidr_blocks = ["10.20.0.0/16", "100.64.0.0/10"]
+
+# Optional overrides:
+# name               = "saltlick"
+# log_retention_days = 30
+# tags               = { owner = "example-coalition" }

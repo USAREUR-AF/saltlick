@@ -1,0 +1,33 @@
+# The directory runs on an internal network, so there is no ACME challenge to
+# answer and no public certificate to get. Two ways to have TLS anyway; pick
+# one.
+#
+# 1. DEFAULT, below: `tls internal`. Caddy runs a small local CA and issues
+#    itself a certificate. Zero configuration, works immediately. The cost is
+#    that clients must trust that CA's root, which Caddy writes to
+#    /data/caddy/pki/authorities/local/root.crt inside the container:
+#
+#      docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+#
+#    Distribute root.crt to whoever fetches from the directory.
+#
+# 2. YOUR OWN CA, which is what to do if you already have one. Put the
+#    certificate and key in ./certs, then swap the tls line below for:
+#
+#      tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+#
+# Either way, TLS is doing transport hygiene here and nothing more. It is not
+# what makes a package trustworthy — a consumer verifies the signature over the
+# bytes themselves, against a key bound out of band. Serving over plaintext
+# would still be wrong, because it invites someone on the path to alter bytes
+# in flight and waste a consumer's time.
+
+{$SALTLICK_DOMAIN} {
+	tls internal
+
+	reverse_proxy saltlick:8080
+
+	log {
+		output stdout
+	}
+}
