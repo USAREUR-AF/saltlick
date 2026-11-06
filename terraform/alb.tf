@@ -1,23 +1,21 @@
-# Internal entry point.
+# Entry point: the load balancer gives the directory a stable name, a health
+# check, and a place to terminate TLS.
 #
-# `internal = true` is the load-bearing line: the load balancer gets private
-# addresses only and has no path from the internet. It exists to give the
-# directory a stable name, a health check, and a place to terminate TLS.
-#
-# Reaching it is your job and deliberately outside this module. Attach the VPC
-# to whatever network your operators and coalition members already use — a mesh
-# peer with a route to var.vpc_cidr, a VPC peering connection, a transit
-# gateway, a VPN. This module does not guess which.
+# With var.internet_facing = true (the default) it holds public addresses and
+# any party reaches it over the internet; allowed_cidr_blocks must then be set
+# explicitly, e.g. ["0.0.0.0/0"]. With false it is internal, and reaching it is
+# a matter of attaching this VPC to your network: peering, a transit gateway, a
+# VPN.
 
 locals {
-  # Default to the VPC itself. A caller who reaches the directory from a mesh
-  # or a peered network must widen this to those ranges.
+  # Internal only: default to the VPC itself. The internet-facing case has no
+  # default; variables.tf refuses it unset.
   allowed_cidr_blocks = coalesce(var.allowed_cidr_blocks, [var.vpc_cidr])
 }
 
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
-  description = "Ingress to the internal saltlick load balancer"
+  description = "Ingress to the saltlick load balancer"
   vpc_id      = aws_vpc.this.id
 
   tags = { Name = "${var.name}-alb" }
@@ -27,7 +25,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   count = length(local.allowed_cidr_blocks)
 
   security_group_id = aws_security_group.alb.id
-  description       = "HTTPS from allowed internal callers"
+  description       = "HTTPS from allowed callers"
   cidr_ipv4         = local.allowed_cidr_blocks[count.index]
   from_port         = 443
   to_port           = 443
@@ -57,7 +55,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_task" {
 resource "aws_lb" "this" {
   name               = var.name
   load_balancer_type = "application"
-  internal           = true
+  internal           = !var.internet_facing
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.this[*].id
 

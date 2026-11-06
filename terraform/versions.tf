@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.5.0"
+  # 1.9 for allowed_cidr_blocks' validation, which reads internet_facing.
+  required_version = ">= 1.9.0"
 
   required_providers {
     aws = {

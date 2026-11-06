@@ -1,11 +1,12 @@
 # A small, self-contained VPC across two availability zones.
 #
-# Two AZs because an Application Load Balancer requires two, even an internal
-# one. Nothing here is reachable from the internet: the load balancer is
-# internal and holds only private addresses (see alb.tf).
+# Two AZs because an Application Load Balancer requires two. The only thing
+# reachable from outside is the load balancer (see alb.tf); the task accepts
+# traffic only from it.
 #
-# The internet gateway exists for outbound traffic only — the task pulls its
-# container image and ships logs through it. If your account forbids public IPs
+# The internet gateway carries the internet-facing load balancer's traffic, and
+# the task's outbound traffic — it pulls its container image and ships logs
+# through it. If your account forbids public IPs
 # on tasks, see the task_assign_public_ip variable, and note that this module
 # creates neither a NAT gateway nor VPC endpoints.
 
