@@ -23,12 +23,19 @@ import (
 	"github.com/usareur-af/saltlick/internal/canonical"
 )
 
-// SpecVersion is the one package spec version this instance accepts. The spec
+// SpecVersion is the package spec version this instance accepts. The spec
 // version is the migration path for the signature algorithm: an implementation
 // of this version verifies signatures under this version's algorithm, and only
 // over packages that declare this version. A package written for an older or a
 // newer lineage is refused unread, in either direction.
 const SpecVersion = "federation-package/v1"
+
+// PointerSpec is the pointer record: where a party's signed package can be
+// fetched, and the digest of it. See pointer.go.
+const PointerSpec = "saltlick-pointer/v1"
+
+// Accepted lists every spec value an entry may declare.
+var Accepted = []string{PointerSpec, SpecVersion}
 
 // requiredMembers are the always-required blocks of a package (§3).
 var requiredMembers = []string{
@@ -64,8 +71,9 @@ var (
 type Package struct {
 	Raw         []byte
 	Doc         *canonical.Value
+	Spec        string // SpecVersion or PointerSpec
 	SovereignID string
-	Issued      string
+	Issued      string // empty for a pointer, which carries no issued date
 	Expires     string
 }
 
@@ -94,6 +102,10 @@ func Parse(raw []byte) (*Package, error) {
 		}
 	}
 
+	if spec := doc.Get("spec"); spec != nil && spec.Kind == canonical.KindString && spec.Str == PointerSpec {
+		return parsePointer(raw, doc)
+	}
+
 	// An unknown top-level member is refused rather than ignored. Presence is
 	// the declaration in this format, so a member this version does not know is
 	// a declaration this version cannot read -- and a block named, say,
@@ -119,7 +131,7 @@ func Parse(raw []byte) (*Package, error) {
 		return nil, err
 	}
 	if spec != SpecVersion {
-		return nil, fmt.Errorf("spec is %q; this instance accepts %q only", spec, SpecVersion)
+		return nil, fmt.Errorf("spec is %q; this instance accepts %s", spec, strings.Join(quoted(Accepted), " or "))
 	}
 
 	sovID, err := str(doc, "sovereign_id")
@@ -155,6 +167,7 @@ func Parse(raw []byte) (*Package, error) {
 	return &Package{
 		Raw:         raw,
 		Doc:         doc,
+		Spec:        SpecVersion,
 		SovereignID: sovID,
 		Issued:      issued,
 		Expires:     expires,
@@ -390,4 +403,12 @@ func date(v *canonical.Value, name string) (string, error) {
 		return "", fmt.Errorf("%s is not a real date: %q", name, s)
 	}
 	return s, nil
+}
+
+func quoted(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = fmt.Sprintf("%q", s)
+	}
+	return out
 }

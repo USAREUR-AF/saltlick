@@ -99,3 +99,24 @@ func SignedEntry(t *testing.T, k Key, sovereignID, issued, expires string) []byt
 	t.Helper()
 	return Sign(t, k, DirectoryEntry(sovereignID, issued, expires))
 }
+
+// TestDigest is a well-formed package_sha256 for pointer tests.
+const TestDigest = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+// Pointer is a valid saltlick-pointer/v1 record, unsigned.
+func Pointer(sovereignID, packageURL, expires string) string {
+	return fmt.Sprintf(`{
+  "spec": "saltlick-pointer/v1",
+  "sovereign_id": %q,
+  "package_url": %q,
+  "package_sha256": %q,
+  "expires": %q
+}`, sovereignID, packageURL, TestDigest, expires)
+}
+
+// SignedPointer is Pointer plus Sign, with package_url
+// https://<sovereign_id>.example/federation-package.json.
+func SignedPointer(t *testing.T, k Key, sovereignID, expires string) []byte {
+	t.Helper()
+	return Sign(t, k, Pointer(sovereignID, "https://"+sovereignID+".example/federation-package.json", expires))
+}

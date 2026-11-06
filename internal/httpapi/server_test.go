@@ -673,3 +673,107 @@ func TestOversizedBodyIs413(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// ---------------------------------------------------------------------------
+// Pointer records.
+// ---------------------------------------------------------------------------
+
+func TestPointerFirstPublishBindsAndRoundTripsByteForByte(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "ptr-bind")
+	raw := testsupport.SignedPointer(t, k, "xaa", "2026-12-06")
+
+	resp := h.publish("xaa", k, raw)
+	mustStatus(t, resp, http.StatusCreated)
+	got := decode(t, resp)
+	if got["first_use"] != true || got["bound_key"] != k.PubB64 || got["spec"] != "saltlick-pointer/v1" {
+		t.Fatalf("publish response %v", got)
+	}
+	if _, ok := got["issued"]; ok {
+		t.Fatal("a pointer has no issued date, and the response must not invent one")
+	}
+
+	resp = h.get("/v1/parties/xaa")
+	mustStatus(t, resp, http.StatusOK)
+	if resp.Header.Get(httpapi.HeaderBoundKey) != k.PubB64 || resp.Header.Get(httpapi.HeaderExpired) != "false" {
+		t.Fatalf("headers %v", resp.Header)
+	}
+	if b := body(t, resp); !bytes.Equal(b, raw) {
+		t.Fatalf("GET returned different bytes:\n got %s\nwant %s", b, raw)
+	}
+
+	listed := decode(t, h.get("/v1/parties"))
+	item := listed["parties"].([]any)[0].(map[string]any)
+	if item["spec"] != "saltlick-pointer/v1" || item["sovereign_id"] != "xaa" {
+		t.Fatalf("list item %v", item)
+	}
+	if _, ok := item["issued"]; ok {
+		t.Fatal("list item for a pointer carries issued")
+	}
+}
+
+func TestPointerSecondKeyIsRefused(t *testing.T) {
+	h := newHarness(t)
+	first := testsupport.NewKey(t, "ptr-first")
+	second := testsupport.NewKey(t, "ptr-second")
+	mustStatus(t, h.publish("xaa", first, testsupport.SignedPointer(t, first, "xaa", "2026-12-06")), http.StatusCreated)
+	mustStatus(t, h.publish("xaa", second, testsupport.SignedPointer(t, second, "xaa", "2026-12-06")), http.StatusForbidden)
+}
+
+func TestPointerUnknownMemberAndNonHTTPSAreRefused(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "ptr-refuse")
+
+	extra := strings.Replace(testsupport.Pointer("xaa", "https://xaa.example/p.json", "2026-12-06"),
+		`"expires"`, `"contact": "ops@xaa.example", "expires"`, 1)
+	resp := h.publish("xaa", k, testsupport.Sign(t, k, extra))
+	mustStatus(t, resp, http.StatusUnprocessableEntity)
+	resp.Body.Close()
+
+	plain := testsupport.Pointer("xaa", "http://xaa.example/p.json", "2026-12-06")
+	resp = h.publish("xaa", k, testsupport.Sign(t, k, plain))
+	mustStatus(t, resp, http.StatusUnprocessableEntity)
+	if msg, _ := decode(t, resp)["error"].(string); !strings.Contains(msg, "https://") {
+		t.Fatalf("refusal %q should say https is required", msg)
+	}
+}
+
+func TestPointerSignatureMustVerify(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "ptr-sig")
+	other := testsupport.NewKey(t, "ptr-sig-other")
+	// Record signed by another key, request signed by k: the stored record
+	// would not verify under the key the directory advertises for it.
+	resp := h.publish("xaa", k, testsupport.SignedPointer(t, other, "xaa", "2026-12-06"))
+	mustStatus(t, resp, http.StatusForbidden)
+	resp.Body.Close()
+
+	// A record altered after signing.
+	raw := testsupport.SignedPointer(t, k, "xaa", "2026-12-06")
+	tampered := bytes.Replace(raw, []byte("xaa.example"), []byte("xab.example"), 1)
+	resp = h.publish("xaa", k, tampered)
+	mustStatus(t, resp, http.StatusForbidden)
+	resp.Body.Close()
+}
+
+func TestExpiredPointerIsStillServedAndFlagged(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "ptr-expired")
+	mustStatus(t, h.publish("xaa", k, testsupport.SignedPointer(t, k, "xaa", "2026-01-01")), http.StatusCreated)
+
+	resp := h.get("/v1/parties/xaa")
+	mustStatus(t, resp, http.StatusOK)
+	if resp.Header.Get(httpapi.HeaderExpired) != "true" {
+		t.Fatalf("%s = %q, want true", httpapi.HeaderExpired, resp.Header.Get(httpapi.HeaderExpired))
+	}
+	resp.Body.Close()
+}
+
+func TestSpecReportsBothFormats(t *testing.T) {
+	h := newHarness(t)
+	got := decode(t, h.get("/v1/spec"))
+	accepts, _ := got["accepts"].([]any)
+	if len(accepts) != 2 || accepts[0] != "saltlick-pointer/v1" || accepts[1] != "federation-package/v1" {
+		t.Fatalf("accepts = %v", got["accepts"])
+	}
+}

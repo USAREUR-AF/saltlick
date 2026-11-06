@@ -111,21 +111,25 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-// spec reports which package spec version this instance accepts. A package
-// written for another lineage is refused unread, in either direction.
+// spec reports which entry formats this instance accepts. A document written
+// for another lineage is refused unread, in either direction. "spec" names the
+// package format; "accepts" lists every format an entry may declare.
 func (s *Server) spec(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"spec":            pkgv1.SpecVersion,
+		"accepts":         pkgv1.Accepted,
 		"request_version": writeauth.StatementVersion,
 	})
 }
 
 type listItem struct {
 	SovereignID string `json:"sovereign_id"`
-	Issued      string `json:"issued"`
-	Expires     string `json:"expires"`
-	Expired     bool   `json:"expired"`
-	BoundKey    string `json:"bound_key"`
+	Spec        string `json:"spec"`
+	// Issued is omitted for a pointer record, which carries no issued date.
+	Issued   string `json:"issued,omitempty"`
+	Expires  string `json:"expires"`
+	Expired  bool   `json:"expired"`
+	BoundKey string `json:"bound_key"`
 }
 
 // list is a catalogue and nothing more. It has no filters, no sort parameter
@@ -140,8 +144,13 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	today := s.today()
 	items := make([]listItem, 0, len(entries))
 	for _, e := range entries {
+		spec := ""
+		if p, err := pkgv1.Parse(e.Package); err == nil {
+			spec = p.Spec
+		}
 		items = append(items, listItem{
 			SovereignID: e.SovereignID,
+			Spec:        spec,
 			Issued:      e.Issued,
 			Expires:     e.Expires,
 			Expired:     e.Expires < today,
@@ -181,7 +190,9 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(HeaderExpired, fmt.Sprintf("%t", expired))
 	w.Header().Set(HeaderBoundKey, e.BoundKey)
-	w.Header().Set(HeaderIssued, e.Issued)
+	if e.Issued != "" {
+		w.Header().Set(HeaderIssued, e.Issued)
+	}
 	w.Header().Set(HeaderExpires, e.Expires)
 	w.Header().Set(HeaderAdvisory, Advisory)
 	w.WriteHeader(http.StatusOK)
@@ -291,15 +302,19 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 			"bound key replaced "+boundKey+" -> "+entry.BoundKey+", authorised by a signature under the key replaced", now)
 	}
 
-	s.writeJSON(w, status, map[string]any{
+	resp := map[string]any{
 		"sovereign_id": pkg.SovereignID,
-		"issued":       pkg.Issued,
+		"spec":         pkg.Spec,
 		"expires":      pkg.Expires,
 		"expired":      pkg.IsExpired(now),
 		"bound_key":    entry.BoundKey,
 		"first_use":    decision.FirstUse,
 		"rotated":      decision.Rotation,
-	})
+	}
+	if pkg.Issued != "" {
+		resp["issued"] = pkg.Issued
+	}
+	s.writeJSON(w, status, resp)
 }
 
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {

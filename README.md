@@ -4,8 +4,10 @@ A directory where an organisation publishes its own interconnection capability, 
 organisations can check compatibility before they build a link between them. It is modelled on
 PeeringDB, the database internet network operators consult before turning up a BGP session.
 
-An entry is an ordinary [federation package](SPEC.md) carrying only the always-required blocks:
-who the party is, what its trust anchor is, and what its fabric can do.
+The directory holds pointers, not permissions. The expected entry is a signed **pointer
+record**: where the party's signed package can be fetched, and that package's digest. A
+recognition-only [federation package](SPEC.md) — who the party is, what its trust anchor is,
+what its fabric can do — is accepted too. The body's `spec` member says which it is.
 
 ## The invariant
 
@@ -94,7 +96,28 @@ IPv6 clients are counted per /64. A bucket idle long enough to refill is dropped
 budget tracks at most 65,536 sources; past that, a new source is refused with 429 until idle
 ones age out.
 
-## What an entry may and may not carry
+## The pointer record
+
+| Member | Value |
+|---|---|
+| `spec` | `"saltlick-pointer/v1"` |
+| `sovereign_id` | 2–16 characters of `a-z0-9-` |
+| `package_url` | absolute `https://` URL of the party's signed package; at most 2048 characters; no userinfo, no fragment |
+| `package_sha256` | `"sha256:"` + 64 lowercase hex: SHA-256 of the package's canonical bytes |
+| `expires` | `YYYY-MM-DD`; reported, never enforced |
+| `signature` | Ed25519 by the party over the RFC 8785 canonical form of the record without `signature` |
+
+Exactly these members; anything else — a key, an identity, a contact, an offer — is refused
+with HTTP 422. A pointer has no `issued` date, so its list item and `GET` headers carry none.
+
+A counterparty uses it in four steps, and the directory is an input to none of the checks:
+
+1. `GET /v1/parties/xaa` — the pointer.
+2. Fetch the package from `package_url`.
+3. Verify the package's signatures against its own trust store.
+4. Recompute the package's digest and compare it with `package_sha256`.
+
+## What a recognition-only package may and may not carry
 
 | Present | Refused |
 |---|---|
@@ -160,11 +183,11 @@ is an administrative act by an operator with the database file, and it is record
 
 | Method | Path | Does |
 |---|---|---|
-| `GET` | `/v1/parties` | List: `sovereign_id`, `issued`, `expires`, `expired`, `bound_key` |
-| `GET` | `/v1/parties/{sovereign_id}` | The stored package, byte-for-byte as submitted |
+| `GET` | `/v1/parties` | List: `sovereign_id`, `spec`, `issued` (packages only), `expires`, `expired`, `bound_key` |
+| `GET` | `/v1/parties/{sovereign_id}` | The stored entry, byte-for-byte as submitted |
 | `PUT` | `/v1/parties/{sovereign_id}` | Publish or replace |
 | `DELETE` | `/v1/parties/{sovereign_id}` | Signed by the bound key |
-| `GET` | `/v1/spec` | Which package spec version this instance accepts |
+| `GET` | `/v1/spec` | `spec`: the package format; `accepts`: every entry format, `saltlick-pointer/v1` and `federation-package/v1` |
 | `GET` | `/healthz` | Liveness |
 
 Anyone may read. Writes need two headers:
@@ -197,7 +220,8 @@ therefore travels in headers:
 | Header | On |
 |---|---|
 | `X-Saltlick-Expired` | `GET /v1/parties/{id}` |
-| `X-Saltlick-Bound-Key`, `X-Saltlick-Issued`, `X-Saltlick-Expires` | `GET /v1/parties/{id}` |
+| `X-Saltlick-Bound-Key`, `X-Saltlick-Expires` | `GET /v1/parties/{id}` |
+| `X-Saltlick-Issued` | `GET /v1/parties/{id}`, packages only |
 | `X-Saltlick-Advisory` | Every response |
 
 ### Expiry is reported, never enforced
@@ -231,7 +255,23 @@ Read the verifying key to your counterparty in eleven groups of four characters,
 group count first, and have them read it back. That human step is what binds the key. This
 directory is a cache of that binding, never its source.
 
-Write the package. Only the always-required blocks:
+Write the pointer, naming where your signed package is served and its digest:
+
+```bash
+cat > xaa.pointer.json <<'EOF'
+{
+  "spec": "saltlick-pointer/v1",
+  "sovereign_id": "xaa",
+  "package_url": "https://xaa.example/federation-package.json",
+  "package_sha256": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "expires": "2026-12-06"
+}
+EOF
+saltlick sign -key xaa.key -package xaa.pointer.json -out xaa.pointer.signed.json
+```
+
+and publish it as below. A recognition-only package instead carries only the always-required
+blocks:
 
 ```bash
 cat > xaa.json <<'EOF'
@@ -326,6 +366,7 @@ load-bearing.
 | `cmd/saltlick/main.go` | The binary: `serve`, `keygen`, `sign`, `clear`, `log` |
 | `internal/httpapi/server.go` | The HTTP surface. Its package comment states what may not be added and why |
 | `internal/pkgv1/package.go` | Reading a package as a directory entry; the offer-block refusal |
+| `internal/pkgv1/pointer.go` | Reading a pointer record |
 | `internal/writeauth/writeauth.go` | Trust-on-first-use, and what it explicitly does not establish |
 | `internal/canonical/` | Strict JSON reading and RFC 8785 canonicalisation, for signature checking |
 | `internal/store/store.go` | SQLite. The `package` column holds the submitted bytes as a BLOB |
