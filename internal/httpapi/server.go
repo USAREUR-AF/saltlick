@@ -105,6 +105,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/parties/{sovereign_id}", s.get)
 	mux.HandleFunc("PUT /v1/parties/{sovereign_id}", s.put)
 	mux.HandleFunc("DELETE /v1/parties/{sovereign_id}", s.delete)
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/package", s.getHosted(store.KindPackage))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/package", s.putHosted(store.KindPackage))
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/ca", s.getHosted(store.KindCA))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/ca", s.putHosted(store.KindCA))
 	return mux
 }
 
@@ -131,26 +135,42 @@ type listItem struct {
 	Expires  string `json:"expires"`
 	Expired  bool   `json:"expired"`
 	BoundKey string `json:"bound_key"`
+	// Package and CA are the paths of the files the party hosts here, omitted
+	// when it hosts none.
+	Package string `json:"package,omitempty"`
+	CA      string `json:"ca,omitempty"`
 }
 
 // list is a catalogue and nothing more. It has no filters, no sort parameter
 // and no query by capability, because each of those is a step towards answering
 // "who should I federate with", which is not this server's question to answer.
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.List(r.Context())
+	items, err := s.catalogue(r.Context())
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "listing entries: %v", err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"spec":    pkgv1.SpecVersion,
-		"parties": s.listItems(entries),
+		"parties": items,
 	})
 }
 
-// listItems is the catalogue row for each stored entry, shared by the JSON
+// catalogue is the catalogue row for each stored entry, shared by the JSON
 // list and the home page.
-func (s *Server) listItems(entries []store.Entry) []listItem {
+func (s *Server) catalogue(ctx context.Context) ([]listItem, error) {
+	entries, err := s.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hosted, err := s.store.HostedKinds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.listItems(entries, hosted), nil
+}
+
+func (s *Server) listItems(entries []store.Entry, hosted map[string]map[string]bool) []listItem {
 	today := s.today()
 	items := make([]listItem, 0, len(entries))
 	for _, e := range entries {
@@ -158,14 +178,21 @@ func (s *Server) listItems(entries []store.Entry) []listItem {
 		if p, err := pkgv1.Parse(e.Package); err == nil {
 			spec = p.Spec
 		}
-		items = append(items, listItem{
+		item := listItem{
 			SovereignID: e.SovereignID,
 			Spec:        spec,
 			Issued:      e.Issued,
 			Expires:     e.Expires,
 			Expired:     e.Expires < today,
 			BoundKey:    e.BoundKey,
-		})
+		}
+		if hosted[e.SovereignID][store.KindPackage] {
+			item.Package = "/v1/parties/" + e.SovereignID + "/package"
+		}
+		if hosted[e.SovereignID][store.KindCA] {
+			item.CA = "/v1/parties/" + e.SovereignID + "/ca"
+		}
+		items = append(items, item)
 	}
 	return items
 }

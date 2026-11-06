@@ -42,14 +42,15 @@ Exposure is safe because the service grants nothing and nothing it serves is tru
 |---|---|
 | Entries are self-verifying | A package carries a signature over its own canonical form. A consumer checks it against a key bound out of band, so a tampered or forged entry fails at the consumer |
 | Writes are trust-on-first-use | The first `PUT` for a `sovereign_id` binds the key it presents; every later write must be signed by that key |
-| Offers are refused | A submission carrying `transport_offer`, `data_offer` or `cut` is refused with HTTP 422, so reachability, release sets and contacts never land here |
+| Offers are refused in entries | An entry carrying `transport_offer`, `data_offer` or `cut` is refused with HTTP 422, so the listing never shows reachability, release sets or contacts |
+| Hosted files are the party's own | A party with no public host keeps its signed package and CA certificate beside its entry; they are signed by the entry's key, checked on upload, and served byte for byte for the reader to verify |
 | No accounts | There is nothing to log in to and no credential to steal. Authentication would protect nothing, because nothing served is trusted |
 
 What it exposes:
 
 | Request | Who |
 |---|---|
-| `GET` — list, entry, spec, health | Anyone |
+| `GET` — list, entry, hosted package and CA, spec, health | Anyone |
 | `PUT`, `DELETE` | Anyone holding the bound key; the request is signed |
 
 What protects it:
@@ -61,9 +62,10 @@ What protects it:
 | Per-source rate limit, writes | the service | 6/min, burst 6 |
 | Body cap | the service, and Caddy in `deploy/` | 64 KiB, HTTP 413 above it |
 | Server timeouts | the service | header 10 s, read 30 s, write 30 s, idle 120 s |
-| Offer refusal | the service | HTTP 422 |
+| Offer refusal in entries | the service | HTTP 422 |
 
-What it never holds: offers, reachability, contacts, accounts, passwords, private keys.
+What it never holds: accounts, passwords, private keys. Offers reach it only inside a package a
+party chose to host here.
 
 `saltlick serve` binds `127.0.0.1:8080` for a bare local run. The expected deployment puts it
 behind a public TLS proxy or load balancer; the container image sets `SALTLICK_ADDR=:8080` so
@@ -116,6 +118,27 @@ A counterparty uses it in four steps, and the directory is an input to none of t
 2. Fetch the package from `package_url`.
 3. Verify the package's signatures against its own trust store.
 4. Recompute the package's digest and compare it with `package_sha256`.
+
+## A party with no public host
+
+A party behind NAT keeps its package and CA certificate here. In order:
+
+1. `PUT /v1/parties/xaa` — the pointer, with `package_url` set to
+   `https://<this instance>/v1/parties/xaa/package`. This binds the key on first use.
+2. `PUT /v1/parties/xaa/package` — the canonical signed package, offers included.
+3. `PUT /v1/parties/xaa/ca` — the CA certificate(s), PEM.
+
+| Upload | Checked |
+|---|---|
+| `package` | `federation-package/v1`; `sovereign_id` is the path's; RFC 8785 canonical bytes; signature verifies under the entry's bound key |
+| `ca` | PEM `CERTIFICATE` blocks only, each an X.509 CA certificate |
+
+Both need an existing entry (409 without one) and a request signed by the entry's bound key
+(403 otherwise), share the 64 KiB cap and the write budget, are served byte for byte, and are
+deleted with the entry. The directory does not compare them with the pointer: the reader
+recomputes the digest and checks the CA's SHA-256 against the package's
+`identity.ca_fingerprint`. The goatcore federation driver does all three uploads and both
+checks.
 
 ## What a recognition-only package may and may not carry
 
@@ -172,6 +195,7 @@ there.
 | `saltlick keygen [-out xaa]` | Generate an Ed25519 keypair in the encoding the API expects |
 | `saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json` | Sign a package; print the publish headers on stderr |
 | `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs |
+| `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`) beside the entry; the file is sent unchanged |
 | `saltlick clear -db saltlick.db -id xaa -reason "key lost"` | Release a binding; logged |
 | `saltlick log -db saltlick.db` | Print the administrative log |
 
@@ -183,10 +207,14 @@ is an administrative act by an operator with the database file, and it is record
 
 | Method | Path | Does |
 |---|---|---|
-| `GET` | `/v1/parties` | List: `sovereign_id`, `spec`, `issued` (packages only), `expires`, `expired`, `bound_key` |
+| `GET` | `/v1/parties` | List: `sovereign_id`, `spec`, `issued` (packages only), `expires`, `expired`, `bound_key`, and `package` / `ca` paths when hosted |
 | `GET` | `/v1/parties/{sovereign_id}` | The stored entry, byte-for-byte as submitted |
 | `PUT` | `/v1/parties/{sovereign_id}` | Publish or replace |
-| `DELETE` | `/v1/parties/{sovereign_id}` | Signed by the bound key |
+| `DELETE` | `/v1/parties/{sovereign_id}` | Signed by the bound key; deletes the hosted files too |
+| `GET` | `/v1/parties/{sovereign_id}/package` | The hosted package, byte-for-byte, `application/json` |
+| `PUT` | `/v1/parties/{sovereign_id}/package` | Host or replace it; signed by the entry's bound key |
+| `GET` | `/v1/parties/{sovereign_id}/ca` | The hosted CA certificate(s), byte-for-byte, `application/pem-certificate-chain` |
+| `PUT` | `/v1/parties/{sovereign_id}/ca` | Host or replace them; signed by the entry's bound key |
 | `GET` | `/v1/spec` | `spec`: the package format; `accepts`: every entry format, `saltlick-pointer/v1` and `federation-package/v1` |
 | `GET` | `/healthz` | Liveness |
 
@@ -207,8 +235,9 @@ sha256:<hex of the request body; the empty string hashed where there is no body>
 <the X-Saltlick-Key value, or "-" where there is none>
 ```
 
-It binds the method, the `sovereign_id`, the body and the key presented, so none of the four
-can be swapped for another. `saltlick sign` builds and signs it for you.
+The third line is the path below `/v1/parties/`: `xaa` for the entry, `xaa/package` or `xaa/ca`
+for a hosted file. It binds the method, the resource, the body and the key presented, so none of
+the four can be swapped for another. `saltlick sign` builds and signs it for you.
 
 ### GET returns the submitted bytes unaltered
 
@@ -220,7 +249,7 @@ therefore travels in headers:
 | Header | On |
 |---|---|
 | `X-Saltlick-Expired` | `GET /v1/parties/{id}` |
-| `X-Saltlick-Bound-Key`, `X-Saltlick-Expires` | `GET /v1/parties/{id}` |
+| `X-Saltlick-Bound-Key`, `X-Saltlick-Expires` | `GET /v1/parties/{id}`; the bound key also on the hosted files |
 | `X-Saltlick-Issued` | `GET /v1/parties/{id}`, packages only |
 | `X-Saltlick-Advisory` | Every response |
 
@@ -329,6 +358,16 @@ Read it back and confirm the bytes are unchanged:
 ```bash
 curl -s https://directory.example/v1/parties/xaa -o fetched.json
 cmp xaa.signed.json fetched.json && echo identical
+```
+
+Host a CA certificate beside the entry (the package the same way, with `-upload package`):
+
+```bash
+saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa
+# X-Saltlick-Key: pLgCyHH6SH7N02G9sFrWG1wODsv0PT434mlFj8H5X64=
+# X-Saltlick-Signature: <88 characters>
+curl -X PUT https://directory.example/v1/parties/xaa/ca \
+  -H "X-Saltlick-Key: ..." -H "X-Saltlick-Signature: ..." --data-binary @xaa-ca.pem
 ```
 
 Delete:

@@ -2,6 +2,8 @@
 //
 // One rule governs the schema: the package column holds the bytes exactly as
 // they were submitted, as a BLOB, and nothing in this repository rewrites them.
+// The same holds for the hosted table, which keeps a party's package and CA
+// certificate beside its entry.
 // A consumer verifies a signature over exactly what was signed, so any
 // re-serialisation -- re-ordering members, re-indenting, round-tripping through
 // a struct -- destroys the entry's only useful property.
@@ -50,6 +52,13 @@ CREATE TABLE IF NOT EXISTS entries (
   expires      TEXT NOT NULL,
   first_seen   TEXT NOT NULL,
   updated      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hosted (
+  sovereign_id TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  body         BLOB NOT NULL,
+  updated      TEXT NOT NULL,
+  PRIMARY KEY (sovereign_id, kind)
 );
 CREATE TABLE IF NOT EXISTS admin_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,9 +160,15 @@ func (s *Store) Put(ctx context.Context, e *Entry, now time.Time) error {
 	return err
 }
 
-// Delete removes an entry. It returns ErrNotFound if there was none.
+// Delete removes an entry and every file hosted for it, in one transaction.
+// It returns ErrNotFound if there was no entry.
 func (s *Store) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM entries WHERE sovereign_id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	res, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE sovereign_id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -164,7 +179,69 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// The kinds of file a party may host beside its entry.
+const (
+	KindPackage = "package" // the party's signed federation package, canonical bytes
+	KindCA      = "ca"      // the party's CA certificate(s), PEM
+)
+
+// ErrNoFile is returned when a party hosts no file of the kind asked for.
+var ErrNoFile = errors.New("no file of that kind for that sovereign_id")
+
+// PutFile stores a hosted file exactly as received, replacing any earlier one
+// of the same kind. The caller has decided the write is permitted.
+func (s *Store) PutFile(ctx context.Context, id, kind string, body []byte, now time.Time) (replaced bool, err error) {
+	var one int
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return false, err
+	default:
+		replaced = true
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO hosted (sovereign_id, kind, body, updated) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(sovereign_id, kind) DO UPDATE SET body = excluded.body, updated = excluded.updated`,
+		id, kind, body, now.UTC().Format(time.RFC3339))
+	return replaced, err
+}
+
+// GetFile returns a hosted file's bytes, or ErrNoFile.
+func (s *Store) GetFile(ctx context.Context, id, kind string) ([]byte, error) {
+	var b []byte
+	err := s.db.QueryRowContext(ctx, `SELECT body FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoFile
+	}
+	return b, err
+}
+
+// HostedKinds returns, per sovereign_id, the kinds of file it hosts.
+func (s *Store) HostedKinds(ctx context.Context) (map[string]map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT sovereign_id, kind FROM hosted`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]bool{}
+	for rows.Next() {
+		var id, kind string
+		if err := rows.Scan(&id, &kind); err != nil {
+			return nil, err
+		}
+		if out[id] == nil {
+			out[id] = map[string]bool{}
+		}
+		out[id][kind] = true
+	}
+	return out, rows.Err()
 }
 
 // AppendLog records an act against an entry. Two acts are recorded: a key

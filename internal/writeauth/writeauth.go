@@ -34,14 +34,14 @@ import (
 const StatementVersion = "saltlick-request/v1"
 
 // Statement is the exact byte string a write request's signature covers. It
-// binds the method, the sovereign_id in the path, the request body and the key
+// binds the method, the resource in the path, the request body and the key
 // being presented, so that none of the four can be swapped for another.
 //
 // Five lines, each terminated by a newline:
 //
 //	saltlick-request/v1
 //	<METHOD>
-//	<sovereign_id>
+//	<the path below /v1/parties/: <sovereign_id>, <sovereign_id>/package or <sovereign_id>/ca>
 //	sha256:<hex of the request body, empty string hashed where there is none>
 //	<presented verifying key, base64, or "-" where there is none>
 func Statement(method, sovereignID string, body []byte, presentedKey string) []byte {
@@ -140,6 +140,28 @@ func AuthorisePut(boundKey string, presentedKey ed25519.PublicKey, requestStatem
 			"If that key is lost, an operator must clear the entry"}
 	}
 	return &Decision{KeyToBind: presentedKey, Rotation: true}, nil
+}
+
+// AuthoriseHosted applies the rule for a file hosted beside an entry: the
+// presented key must be the key already bound to the entry, and the request
+// signature must verify under it. A file never binds or rotates a key; that is
+// the entry's write alone.
+func AuthoriseHosted(boundKey string, presentedKey ed25519.PublicKey, requestStatement, requestSig []byte) error {
+	current, err := pkgv1.DecodeVerifyingKey(boundKey)
+	if err != nil {
+		return fmt.Errorf("stored bound key is unreadable: %w", err)
+	}
+	if len(requestSig) != ed25519.SignatureSize {
+		return fmt.Errorf("request signature is not a 64-byte Ed25519 signature")
+	}
+	if !presentedKey.Equal(current) {
+		return &Refusal{Reason: "the presented key is not the key bound to this sovereign_id's entry; " +
+			"a hosted file is signed by the entry's key, and a key is rotated through the entry"}
+	}
+	if !ed25519.Verify(current, requestStatement, requestSig) {
+		return &Refusal{Reason: "request signature does not verify under the key bound to this sovereign_id"}
+	}
+	return nil
 }
 
 // AuthoriseDelete requires a signature under the bound key.
