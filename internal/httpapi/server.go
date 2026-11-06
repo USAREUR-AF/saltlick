@@ -67,9 +67,10 @@ const (
 	HeaderAdvisory  = "X-Saltlick-Advisory"
 )
 
-// maxBodyBytes bounds a submission. A directory entry is on the order of a
-// kilobyte; this is generous by two orders of magnitude.
-const maxBodyBytes = 64 << 10
+// MaxBodyBytes bounds a submission. A directory entry is on the order of a
+// kilobyte; this is generous by two orders of magnitude. A larger body is
+// refused with 413 before it is parsed.
+const MaxBodyBytes = 64 << 10
 
 // Server is the directory's HTTP surface.
 type Server struct {
@@ -190,8 +191,14 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("sovereign_id")
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeError(w, http.StatusRequestEntityTooLarge,
+				"body exceeds %d bytes; a directory entry is about a kilobyte", tooLarge.Limit)
+			return
+		}
 		s.writeError(w, http.StatusBadRequest, "reading body: %v", err)
 		return
 	}

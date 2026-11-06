@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -73,7 +74,8 @@ func run(args []string) error {
 func usage() {
 	fmt.Fprint(os.Stderr, `saltlick -- a peering directory that grants nothing
 
-  saltlick serve  [-addr :8080] [-db saltlick.db]
+  saltlick serve  [-addr :8080] [-db saltlick.db] [-trusted-proxies <cidrs>]
+                  [-read-limit 10/s] [-read-burst 30] [-write-limit 6/m] [-write-burst 6]
   saltlick clear  -db saltlick.db -id <sovereign_id> -reason <text>
   saltlick log    -db saltlick.db
   saltlick keygen [-out <prefix>]
@@ -84,25 +86,53 @@ establishes that a party is who it claims to be.
 `)
 }
 
-// defaultAddr is loopback, not every interface. The directory is mesh-internal:
-// a partner is not expected to reach it, and federation is unharmed when one
-// cannot, because a package is self-verifying and can be handed over by any
-// means. Defaulting to a routable bind would make an accidental exposure the
-// path of least resistance.
-//
-// A container overrides this. Inside a container the network namespace is the
-// boundary, so the image sets SALTLICK_ADDR=:8080 -- binding loopback there
-// would make the service unreachable to its own reverse proxy or load balancer.
+// defaultAddr is loopback, for a bare local run. A deployment puts the service
+// behind a TLS proxy or load balancer that is reachable from the internet, and
+// sets SALTLICK_ADDR to the address that proxy forwards to; the container image
+// sets SALTLICK_ADDR=:8080, because inside a container binding loopback would
+// make the service unreachable to its own proxy.
 const defaultAddr = "127.0.0.1:8080"
+
+// Per-source defaults. A reader browsing the catalogue makes a handful of
+// requests; a party publishes once per package and rotates rarely.
+const (
+	defaultReadLimit  = "10/s"
+	defaultReadBurst  = 30
+	defaultWriteLimit = "6/m"
+	defaultWriteBurst = 6
+)
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", envOr("SALTLICK_ADDR", defaultAddr), "listen address")
 	dbPath := fs.String("db", envOr("SALTLICK_DB", "saltlick.db"), "SQLite database file")
+	readLimit := fs.String("read-limit", envOr("SALTLICK_READ_LIMIT", defaultReadLimit),
+		"per-source sustained rate for GET: N/s, N/m or N/h; 0 disables")
+	readBurst := fs.Int("read-burst", envInt("SALTLICK_READ_BURST", defaultReadBurst),
+		"per-source burst for GET")
+	writeLimit := fs.String("write-limit", envOr("SALTLICK_WRITE_LIMIT", defaultWriteLimit),
+		"per-source sustained rate for PUT and DELETE: N/s, N/m or N/h; 0 disables")
+	writeBurst := fs.Int("write-burst", envInt("SALTLICK_WRITE_BURST", defaultWriteBurst),
+		"per-source burst for PUT and DELETE")
+	trustedProxies := fs.String("trusted-proxies", os.Getenv("SALTLICK_TRUSTED_PROXIES"),
+		"comma-separated CIDRs of the proxies whose X-Forwarded-For is believed; empty trusts none")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	read, err := httpapi.ParseRate(*readLimit)
+	if err != nil {
+		return fmt.Errorf("-read-limit: %w", err)
+	}
+	write, err := httpapi.ParseRate(*writeLimit)
+	if err != nil {
+		return fmt.Errorf("-write-limit: %w", err)
+	}
+	proxies, err := httpapi.ParsePrefixes(*trustedProxies)
+	if err != nil {
+		return fmt.Errorf("-trusted-proxies: %w", err)
+	}
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
@@ -114,7 +144,18 @@ func serve(args []string) error {
 	defer stop()
 
 	srv := httpapi.New(st, log, time.Now)
-	return httpapi.Serve(ctx, *addr, srv.Handler(), log)
+	limiter := httpapi.NewLimiter(httpapi.LimitConfig{
+		Read:           read,
+		ReadBurst:      *readBurst,
+		Write:          write,
+		WriteBurst:     *writeBurst,
+		TrustedProxies: proxies,
+	}, time.Now)
+	log.Info("per-source limits",
+		"read", *readLimit, "read_burst", *readBurst,
+		"write", *writeLimit, "write_burst", *writeBurst,
+		"trusted_proxies", *trustedProxies)
+	return httpapi.Serve(ctx, *addr, limiter.Wrap(srv.Handler()), log)
 }
 
 // clear removes an entry. It is the answer to a party that has lost its signing
@@ -304,6 +345,21 @@ func sign(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "\n%s: %s\n%s: %s\n", httpapi.HeaderKey, pubB64, httpapi.HeaderSignature, reqSig)
 	return nil
+}
+
+// envInt reads an integer from the environment. A value that does not parse
+// stops the process rather than falling back silently to the default.
+func envInt(name string, fallback int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "saltlick: %s=%q is not an integer\n", name, v)
+		os.Exit(2)
+	}
+	return n
 }
 
 func envOr(name, fallback string) string {

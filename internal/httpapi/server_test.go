@@ -655,3 +655,21 @@ func TestGetUnknownPartyIs404(t *testing.T) {
 	mustStatus(t, resp, http.StatusNotFound)
 	resp.Body.Close()
 }
+
+// TestOversizedBodyIs413 checks the body cap answers as what it is, before the
+// body is parsed or any signature is looked at.
+func TestOversizedBodyIs413(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "oversized")
+	big := bytes.Repeat([]byte(" "), httpapi.MaxBodyBytes+1)
+	resp := h.put("xaa", big, k.Pub, k.Priv)
+	mustStatus(t, resp, http.StatusRequestEntityTooLarge)
+	resp.Body.Close()
+
+	// At the cap exactly, the body is read and judged on its content instead.
+	resp = h.put("xaa", big[:httpapi.MaxBodyBytes], k.Pub, k.Priv)
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		t.Fatal("a body of exactly MaxBodyBytes was refused as too large")
+	}
+	resp.Body.Close()
+}
