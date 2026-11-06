@@ -1,30 +1,37 @@
-# The directory runs on an internal network, so there is no ACME challenge to
-# answer and no public certificate to get. Two ways to have TLS anyway; pick
-# one.
+# Caddy fronts the directory with TLS and a body cap.
 #
-# 1. DEFAULT, below: `tls internal`. Caddy runs a small local CA and issues
-#    itself a certificate. Zero configuration, works immediately. The cost is
-#    that clients must trust that CA's root, which Caddy writes to
-#    /data/caddy/pki/authorities/local/root.crt inside the container:
+# DEFAULT, below: a public certificate from Let's Encrypt (ACME), obtained and
+# renewed automatically for SALTLICK_DOMAIN. Needs a public DNS A (or AAAA)
+# record for that name pointing at this host, and inbound TCP 80 and 443 open:
+# the HTTP-01 challenge is answered on 80, and 80 then redirects to 443.
 #
-#      docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+# ON A PRIVATE NETWORK instead, where no ACME challenge can be answered:
 #
-#    Distribute root.crt to whoever fetches from the directory.
+#   - `tls internal` inside the site block: Caddy runs a local CA and issues
+#     itself a certificate. Clients must trust its root, which Caddy writes to
+#     /data/caddy/pki/authorities/local/root.crt inside the container:
 #
-# 2. YOUR OWN CA, which is what to do if you already have one. Put the
-#    certificate and key in ./certs, then swap the tls line below for:
+#       docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
 #
-#      tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+#   - or your own CA's certificate: put it and its key in ./certs and add
 #
-# Either way, TLS is doing transport hygiene here and nothing more. It is not
-# what makes a package trustworthy — a consumer verifies the signature over the
-# bytes themselves, against a key bound out of band. Serving over plaintext
-# would still be wrong, because it invites someone on the path to alter bytes
-# in flight and waste a consumer's time.
+#       tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+#
+# TLS is transport hygiene here. It is not what makes a package trustworthy: a
+# consumer verifies the signature over the bytes themselves, against a key bound
+# out of band.
 
 {$SALTLICK_DOMAIN} {
-	tls internal
+	# The service refuses a body over 64 KiB with 413 too; refusing it here
+	# keeps it off the backend connection entirely.
+	request_body {
+		max_size 64KiB
+	}
 
+	# Caddy replaces any X-Forwarded-For the client sent with the address it
+	# saw. The service trusts that header only from the compose network
+	# (SALTLICK_TRUSTED_PROXIES in docker-compose.yml), so per-source rate
+	# limits see the real client.
 	reverse_proxy saltlick:8080
 
 	log {

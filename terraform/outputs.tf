@@ -1,14 +1,15 @@
 output "load_balancer_dns_name" {
   description = <<-EOT
-    Private DNS name of the internal load balancer. It resolves to addresses
-    inside the VPC and is not reachable from the internet. Point your internal
-    directory hostname at it, and make sure that name matches certificate_arn.
+    DNS name of the load balancer. Point the directory's hostname at it (a
+    CNAME, or an alias record), and make sure that name matches
+    certificate_arn. With internet_facing = false it resolves to addresses
+    inside the VPC only.
   EOT
   value       = aws_lb.this.dns_name
 }
 
 output "vpc_id" {
-  description = "VPC holding the directory. Attach it to the network your operators reach it from — peering, transit gateway, VPN, or a mesh peer with a route to vpc_cidr."
+  description = "VPC holding the directory. With internet_facing = false, attach it to the network callers reach it from: peering, transit gateway or VPN."
   value       = aws_vpc.this.id
 }
 

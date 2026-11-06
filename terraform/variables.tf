@@ -20,11 +20,10 @@ variable "image" {
 
 variable "certificate_arn" {
   description = <<-EOT
-    ARN of an ACM certificate in this region for the internal hostname you will
-    serve the directory on. The load balancer is internal, so this is usually a
-    certificate from your own CA imported into ACM. A public ACM certificate
-    also works if you own the domain and are willing to point a name at private
-    addresses.
+    ARN of an ACM certificate in this region for the hostname you will serve
+    the directory on. With internet_facing = true this is a public ACM
+    certificate for a public name you own. With internet_facing = false it is
+    usually your own CA's certificate, imported into ACM.
 
     TLS is not optional. Nothing in the directory is a secret, but consumers
     verify signatures over the exact bytes it returns, and plaintext transport
@@ -49,18 +48,35 @@ variable "vpc_cidr" {
   default     = "10.20.0.0/16"
 }
 
+variable "internet_facing" {
+  description = <<-EOT
+    Whether the load balancer is internet-facing (public addresses) or internal
+    (private addresses only). The directory is a neutral meeting place that any
+    party reaches over the internet, so true is the expected case. Set false to
+    run it on a private network attached to this VPC.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "allowed_cidr_blocks" {
   description = <<-EOT
-    Who may reach the internal load balancer. Defaults to the VPC's own CIDR,
-    which means: nothing outside this VPC, until you say otherwise.
+    Who may reach the load balancer on 80 and 443.
 
-    Widen it to the ranges your operators and coalition members actually come
-    from once the VPC is attached to that network — a mesh peer's range, a
-    peered VPC, a VPN pool. Deliberately not "0.0.0.0/0" by default; see the
-    README on why this service is not internet-facing.
+    With internet_facing = true this must be set explicitly; there is no
+    default. For a directory every party can reach, write ["0.0.0.0/0"]. To
+    admit only some parties, list their ranges.
+
+    With internet_facing = false it defaults to the VPC's own CIDR: nothing
+    outside this VPC, until you list the ranges attached to it.
   EOT
   type        = list(string)
   default     = null
+
+  validation {
+    condition     = !var.internet_facing || (var.allowed_cidr_blocks != null ? length(var.allowed_cidr_blocks) > 0 : false)
+    error_message = "internet_facing = true needs allowed_cidr_blocks set explicitly, e.g. [\"0.0.0.0/0\"] for every party."
+  }
 }
 
 variable "container_port" {
@@ -99,7 +115,7 @@ variable "task_memory" {
 variable "task_assign_public_ip" {
   description = <<-EOT
     Whether the task gets a public IP. It does not make the task reachable —
-    its security group accepts traffic only from the internal load balancer —
+    its security group accepts traffic only from the load balancer —
     but it is how the task pulls its image and ships logs without a NAT
     gateway, which would cost more per month than everything else here.
 

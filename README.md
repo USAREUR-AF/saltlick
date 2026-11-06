@@ -28,22 +28,71 @@ offline partner. Nothing in the federation mechanism may come to require the dir
 
 `SPEC.md` is the authority. This file is how to run what it describes.
 
-## It is deliberately not internet-facing
+## Where it runs
 
-The directory runs mesh-internal. `saltlick serve` binds `127.0.0.1:8080` unless told
-otherwise; the container image sets `SALTLICK_ADDR=:8080` because there the network namespace
-is the boundary.
+The directory is a neutral meeting place outside every party's private network. Any party
+reaches it over the internet, over public TLS. It sits inside no party's mesh or VPN, so no
+party has to attach another to its network to use it.
 
-A partner may therefore be unable to fetch from it, and that is tolerated rather than worked
-around. A package is self-verifying: it carries its own signature over its own canonical form,
-and the verifying key was bound over a channel that has nothing to do with this service. So a
-partner who cannot reach the directory is not blocked — the package goes over any channel that
-can carry a file, and it is exactly as trustworthy on arrival. Nothing here needs to be
-reachable for two parties to federate.
+Exposure is safe because the service grants nothing and nothing it serves is trusted:
 
-The point to revisit this is a partner who cannot fetch **and** for whom exchanging the file by
-other means is too slow. Until then, exposing the directory buys nothing that the file transfer
-does not already give, and costs an internet-facing surface.
+| Property | What it means for an internet-reachable instance |
+|---|---|
+| Entries are self-verifying | A package carries a signature over its own canonical form. A consumer checks it against a key bound out of band, so a tampered or forged entry fails at the consumer |
+| Writes are trust-on-first-use | The first `PUT` for a `sovereign_id` binds the key it presents; every later write must be signed by that key |
+| Offers are refused | A submission carrying `transport_offer`, `data_offer` or `cut` is refused with HTTP 422, so reachability, release sets and contacts never land here |
+| No accounts | There is nothing to log in to and no credential to steal. Authentication would protect nothing, because nothing served is trusted |
+
+What it exposes:
+
+| Request | Who |
+|---|---|
+| `GET` — list, entry, spec, health | Anyone |
+| `PUT`, `DELETE` | Anyone holding the bound key; the request is signed |
+
+What protects it:
+
+| Control | Where | Value |
+|---|---|---|
+| Public TLS | Caddy (ACME) in `deploy/`, ALB with a public ACM certificate in `terraform/` | — |
+| Per-source rate limit, reads | the service | 10/s, burst 30 |
+| Per-source rate limit, writes | the service | 6/min, burst 6 |
+| Body cap | the service, and Caddy in `deploy/` | 64 KiB, HTTP 413 above it |
+| Server timeouts | the service | header 10 s, read 30 s, write 30 s, idle 120 s |
+| Offer refusal | the service | HTTP 422 |
+
+What it never holds: offers, reachability, contacts, accounts, passwords, private keys.
+
+`saltlick serve` binds `127.0.0.1:8080` for a bare local run. The expected deployment puts it
+behind a public TLS proxy or load balancer; the container image sets `SALTLICK_ADDR=:8080` so
+that proxy can reach it.
+
+### Per-source rate limits
+
+Each client address has two token buckets: one for reads (`GET`, `HEAD`) and one for writes
+(`PUT`, `DELETE`). `/healthz` draws on neither. A request over budget gets HTTP 429 with
+`Retry-After` in seconds.
+
+| Flag | Env | Default |
+|---|---|---|
+| `-read-limit` | `SALTLICK_READ_LIMIT` | `10/s` |
+| `-read-burst` | `SALTLICK_READ_BURST` | `30` |
+| `-write-limit` | `SALTLICK_WRITE_LIMIT` | `6/m` |
+| `-write-burst` | `SALTLICK_WRITE_BURST` | `6` |
+| `-trusted-proxies` | `SALTLICK_TRUSTED_PROXIES` | empty |
+
+Rates are `N/s`, `N/m` or `N/h`; `0` turns that budget off.
+
+The client address is the connection's peer, unless the peer falls inside
+`-trusted-proxies` (comma-separated CIDRs or addresses). Then `X-Forwarded-For` is read from
+the right, skipping trusted hops, and the first address that is not a trusted proxy is the
+client. With no trusted proxy set, `X-Forwarded-For` is ignored, because any client can write
+it. Set it to the address range of the proxy in front of the service: `deploy/` sets it to the
+compose network, `terraform/` to the VPC.
+
+IPv6 clients are counted per /64. A bucket idle long enough to refill is dropped, and each
+budget tracks at most 65,536 sources; past that, a new source is refused with 429 until idle
+ones age out.
 
 ## What an entry may and may not carry
 
@@ -87,15 +136,16 @@ Storage is SQLite in WAL mode, so it is three files — `saltlick.db`, `saltlick
 `saltlick.db-shm`. Persist the **directory**, not the one file: a single-file bind mount loses
 the write-ahead log. Back it up by copying all three, or by stopping the service first.
 
-To stand an instance up rather than run it locally: `deploy/` is docker compose plus Caddy for
-TLS, which is the expected way a coalition body runs this. `terraform/` puts one instance on
-AWS behind an internal load balancer, for operators who already run there.
+To stand an instance up rather than run it locally: `deploy/` is docker compose plus Caddy with
+a public ACME certificate, which is the expected way a coalition body runs this. `terraform/`
+puts one instance on AWS behind an internet-facing load balancer, for operators who already run
+there.
 
 ### Subcommands
 
 | Command | Does |
 |---|---|
-| `saltlick serve [-addr :8080] [-db saltlick.db]` | Run the directory |
+| `saltlick serve [-addr :8080] [-db saltlick.db] [-trusted-proxies <cidrs>]` | Run the directory; rate-limit flags above |
 | `saltlick keygen [-out xaa]` | Generate an Ed25519 keypair in the encoding the API expects |
 | `saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json` | Sign a package; print the publish headers on stderr |
 | `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs |
@@ -215,7 +265,7 @@ saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json
 Publish:
 
 ```bash
-curl -X PUT http://localhost:8080/v1/parties/xaa \
+curl -X PUT https://directory.example/v1/parties/xaa \
   -H "X-Saltlick-Key: pLgCyHH6SH7N02G9sFrWG1wODsv0PT434mlFj8H5X64=" \
   -H "X-Saltlick-Signature: Yi/jkhGxt3ZjimFb3Gw51TxhOfWTuHPZ37PcbhlB3wCCd50lEMZzOYXT1THSSJIAsNEwMnhk51F5KC8Z49tzBg==" \
   --data-binary @xaa.signed.json
@@ -237,14 +287,14 @@ curl -X PUT http://localhost:8080/v1/parties/xaa \
 Read it back and confirm the bytes are unchanged:
 
 ```bash
-curl -s http://localhost:8080/v1/parties/xaa -o fetched.json
+curl -s https://directory.example/v1/parties/xaa -o fetched.json
 cmp xaa.signed.json fetched.json && echo identical
 ```
 
 Delete:
 
 ```bash
-curl -X DELETE http://localhost:8080/v1/parties/xaa \
+curl -X DELETE https://directory.example/v1/parties/xaa \
   -H "X-Saltlick-Signature: $(saltlick sign -key xaa.key -method DELETE -id xaa | cut -d' ' -f2)"
 ```
 
@@ -279,6 +329,7 @@ load-bearing.
 | `internal/writeauth/writeauth.go` | Trust-on-first-use, and what it explicitly does not establish |
 | `internal/canonical/` | Strict JSON reading and RFC 8785 canonicalisation, for signature checking |
 | `internal/store/store.go` | SQLite. The `package` column holds the submitted bytes as a BLOB |
+| `internal/httpapi/ratelimit.go` | Per-source token buckets and the client-address rule |
 | `deploy/`, `terraform/` | Running an instance: docker compose with Caddy, and an AWS module |
 
 `internal/canonical` exists because the standard library's JSON decoder keeps the last of two

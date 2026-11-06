@@ -94,6 +94,10 @@ resource "aws_ecs_task_definition" "this" {
     environment = [
       { name = "SALTLICK_ADDR", value = ":${var.container_port}" },
       { name = "SALTLICK_DB", value = var.db_path },
+      # The load balancer is the only thing that reaches the task, from inside
+      # the VPC, and appends the client's address to X-Forwarded-For. Trusting
+      # that header from the VPC lets per-source rate limits see the client.
+      { name = "SALTLICK_TRUSTED_PROXIES", value = var.vpc_cidr },
     ]
 
     # The DIRECTORY /data, not the database file: SQLite runs in WAL mode, so

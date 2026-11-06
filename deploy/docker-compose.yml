@@ -1,35 +1,40 @@
-# saltlick, self-hosted. This is the expected way to run the directory: a
-# coalition body runs it inside their own network.
+# saltlick, self-hosted. This is the expected way to run the directory: one
+# small host, reachable from the internet over public TLS, outside every
+# party's private network.
 #
 #   cp .env.example .env    # edit it
 #   docker compose up -d
 #
-# Two containers: the directory, and Caddy in front of it terminating TLS. The
-# directory is not published on a host port; only Caddy is.
-#
-# The directory is NOT meant to be reachable from the internet — see README.md.
-# By default the ports below bind to 127.0.0.1, which reaches nothing but this
-# machine. Set BIND_ADDR in .env to the internal address other people reach you
-# on. Do not set it to 0.0.0.0 on a host with a public interface.
+# Two containers: the directory, and Caddy in front of it obtaining a public
+# certificate and terminating TLS. The directory is not published on a host
+# port; only Caddy is, on 80 and 443.
 #
 # Already have a reverse proxy? Delete the `caddy` service and the `caddy_*`
 # volumes, give `saltlick` a port mapping instead:
 #
 #     ports:
-#       - "${BIND_ADDR:-127.0.0.1}:8080:8080"
+#       - "${BIND_ADDR:-0.0.0.0}:8080:8080"
 #
-# then point your proxy at it and terminate TLS there.
+# set SALTLICK_TRUSTED_PROXIES to your proxy's address, point the proxy at the
+# port and terminate TLS there.
 
 services:
   saltlick:
-    image: ${SALTLICK_IMAGE:-ghcr.io/usareur-af/saltlick:latest}
+    image: ${SALTLICK_IMAGE:?set SALTLICK_IMAGE in .env to a pinned tag or digest}
     restart: unless-stopped
     environment:
       # Set explicitly: the binary's own default is 127.0.0.1:8080, which in a
-      # container would be unreachable from Caddy. The network namespace is the
-      # boundary here, not the bind address.
+      # container would be unreachable from Caddy.
       SALTLICK_ADDR: ":8080"
       SALTLICK_DB: "/data/saltlick.db"
+      # Only Caddy reaches the service, over the compose network below, so
+      # X-Forwarded-For is believed from that network and nowhere else.
+      SALTLICK_TRUSTED_PROXIES: ${SALTLICK_SUBNET:-172.30.53.0/24}
+      # Per-source budgets; the binary's defaults apply when these are unset.
+      SALTLICK_READ_LIMIT: ${SALTLICK_READ_LIMIT:-10/s}
+      SALTLICK_READ_BURST: ${SALTLICK_READ_BURST:-30}
+      SALTLICK_WRITE_LIMIT: ${SALTLICK_WRITE_LIMIT:-6/m}
+      SALTLICK_WRITE_BURST: ${SALTLICK_WRITE_BURST:-6}
     volumes:
       # The DIRECTORY /data, never the database file. SQLite runs in WAL mode,
       # so saltlick.db has -wal and -shm siblings that must sit on the same
@@ -39,6 +44,8 @@ services:
       - saltlick_data:/data
     expose:
       - "8080"
+    networks:
+      - saltlick
 
   caddy:
     image: caddy:2-alpine
@@ -46,23 +53,36 @@ services:
     depends_on:
       - saltlick
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:80:80"
-      - "${BIND_ADDR:-127.0.0.1}:443:443"
+      # Both ports must be reachable from the internet: 80 answers the ACME
+      # HTTP-01 challenge and redirects to 443.
+      - "${BIND_ADDR:-0.0.0.0}:80:80"
+      - "${BIND_ADDR:-0.0.0.0}:443:443"
     environment:
       SALTLICK_DOMAIN: ${SALTLICK_DOMAIN:?set SALTLICK_DOMAIN in .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Your own certificate and key, if you have them. Create the directory
-      # even if empty; see the Caddyfile for how to switch to using them.
+      # Your own certificate and key, for the private-network alternative in
+      # the Caddyfile. Create the directory even if empty.
       - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - saltlick
+
+networks:
+  # A fixed subnet so the service can name its one trusted proxy range. Change
+  # SALTLICK_SUBNET in .env if it collides with a network on this host.
+  saltlick:
+    ipam:
+      config:
+        - subnet: ${SALTLICK_SUBNET:-172.30.53.0/24}
 
 volumes:
   # The SQLite database and its WAL siblings. This is the only state that
   # matters; everything else can be recreated by pulling the image again.
   saltlick_data:
-  # Caddy's local CA key and issued certificates. Deleting it makes Caddy mint
-  # a new CA, which every client would then have to trust afresh.
+  # Caddy's ACME account, issued certificates, and (with `tls internal`) its
+  # local CA. Keep it: deleting it re-issues certificates and, for the local
+  # CA, makes every client trust a new root.
   caddy_data:
   caddy_config:
