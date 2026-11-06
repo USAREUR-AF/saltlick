@@ -113,7 +113,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 // entry fetches it.
 func (s *Store) List(ctx context.Context) ([]Entry, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT sovereign_id, bound_key, issued, expires, first_seen, updated
+		`SELECT sovereign_id, package, bound_key, issued, expires, first_seen, updated
 		   FROM entries ORDER BY sovereign_id`)
 	if err != nil {
 		return nil, err
@@ -123,7 +123,7 @@ func (s *Store) List(ctx context.Context) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var firstSeen, updated string
-		if err := rows.Scan(&e.SovereignID, &e.BoundKey, &e.Issued, &e.Expires, &firstSeen, &updated); err != nil {
+		if err := rows.Scan(&e.SovereignID, &e.Package, &e.BoundKey, &e.Issued, &e.Expires, &firstSeen, &updated); err != nil {
 			return nil, err
 		}
 		e.FirstSeen, _ = time.Parse(time.RFC3339, firstSeen)

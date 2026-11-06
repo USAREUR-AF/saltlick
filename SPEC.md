@@ -44,6 +44,33 @@ here, offering to connect or exchange:
 saying why: reachability, release sets and accepted limits are sovereign operational detail
 and move directly between two parties, never through a directory readable by everyone.
 
+## The intended entry: a pointer record
+
+The directory holds pointers, not permissions. The intended entry is a signed pointer record:
+where a party can be reached for its signed package, and the digest of that package. No key
+material, no identities, no namespaces.
+
+| Member | Value |
+|---|---|
+| `spec` | `"saltlick-pointer/v1"` |
+| `sovereign_id` | as for a package: 2–16 characters of `a-z0-9-` |
+| `package_url` | absolute `https://` URL where the party's signed package can be fetched; at most 2048 characters; no userinfo, no fragment |
+| `package_sha256` | `"sha256:"` + 64 lowercase hex: SHA-256 of the package's canonical bytes |
+| `expires` | `YYYY-MM-DD` |
+| `signature` | Ed25519 by the party, 88 base64 characters, over the RFC 8785 canonical form of the record without `signature` |
+
+Exactly these members; any other is refused. The first write claims the `sovereign_id`, later
+writes must be signed by the same key (trust on first use, below), and an expired pointer is
+served and flagged, as for a package.
+
+A counterparty looks the pointer up, fetches the package from `package_url`, checks its
+signatures against its own trust store, and recomputes the digest. **The directory is not an
+input to that check.** A wrong pointer leads to a package that fails it; a missing one leaves
+the package to travel by any other channel.
+
+The recognition-only package above stays accepted. The `spec` member of the submitted body says
+which of the two it is.
+
 ## Write authenticity — and what it is NOT
 
 Anyone may read. Writes need to be controlled or one party could overwrite another's entry.
@@ -63,12 +90,12 @@ the key means an operator must clear the entry — a plainly administrative act,
 ## API
 
 ```
-GET    /v1/parties                    list: sovereign_id, issued, expires, expired(bool)
-GET    /v1/parties/{sovereign_id}     the stored package, byte-for-byte as submitted
+GET    /v1/parties                    list: sovereign_id, spec, issued (packages only), expires, expired(bool)
+GET    /v1/parties/{sovereign_id}     the stored entry, byte-for-byte as submitted
 PUT    /v1/parties/{sovereign_id}     publish or replace; TOFU rules above
 DELETE /v1/parties/{sovereign_id}     signed by the bound key
 GET    /healthz                       liveness
-GET    /v1/spec                       which package spec version this instance accepts
+GET    /v1/spec                       which entry formats this instance accepts
 ```
 
 `GET` returns the submitted bytes **unaltered** — a consumer must be able to verify the
