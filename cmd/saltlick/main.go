@@ -80,6 +80,7 @@ func usage() {
   saltlick log    -db saltlick.db
   saltlick keygen [-out <prefix>]
   saltlick sign   -key <file> -package <file> [-id <sovereign_id>]
+  saltlick sign   -key <file> -upload package|ca -file <file> -id <sovereign_id>
 
 Advisory only. Being listed grants access to nothing, and nothing here
 establishes that a party is who it claims to be.
@@ -261,6 +262,8 @@ func sign(args []string) error {
 	method := fs.String("method", http.MethodPut, "request method the headers are for")
 	idFlag := fs.String("id", "", "sovereign_id (defaults to the one in the package)")
 	outFile := fs.String("out", "", "write the signed package here instead of stdout")
+	upload := fs.String("upload", "", "print the headers to host a file beside the entry: package or ca (with -file and -id)")
+	uploadFile := fs.String("file", "", "the file to upload with -upload; sent unchanged")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -286,6 +289,23 @@ func sign(args []string) error {
 		}
 		stmt := writeauth.Statement(http.MethodDelete, id, nil, "")
 		fmt.Printf("%s: %s\n", httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(ed25519.Sign(priv, stmt)))
+		return nil
+	}
+
+	if *upload != "" {
+		if *upload != "package" && *upload != "ca" {
+			return errors.New("-upload is package or ca")
+		}
+		if *idFlag == "" || *uploadFile == "" {
+			return errors.New("-upload needs -id and -file")
+		}
+		body, err := os.ReadFile(*uploadFile)
+		if err != nil {
+			return err
+		}
+		stmt := writeauth.Statement(http.MethodPut, *idFlag+"/"+*upload, body, pubB64)
+		fmt.Printf("%s: %s\n%s: %s\n", httpapi.HeaderKey, pubB64,
+			httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(ed25519.Sign(priv, stmt)))
 		return nil
 	}
 

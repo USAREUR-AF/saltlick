@@ -4,7 +4,8 @@
 // always-required blocks. The package format has no tier field and no tier
 // ladder: presence is the declaration. A package carrying transport_offer is
 // willing to connect; one carrying data_offer is willing to exchange. Neither
-// belongs in a directory readable by everyone, so this package refuses them.
+// belongs in an entry the listing reads, so Parse refuses them. A party's full
+// package, hosted beside its entry, is read by ParseHostedPackage instead.
 //
 // Nothing here judges a party. It checks that a document is a well-formed
 // package of the kind a directory holds, and that a signature verifies over the

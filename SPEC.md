@@ -71,6 +71,41 @@ the package to travel by any other channel.
 The recognition-only package above stays accepted. The `spec` member of the submitted body says
 which of the two it is.
 
+## Hosted files: a party with no public host
+
+A party behind NAT, with no public host of its own, keeps two files beside its entry, and its
+pointer's `package_url` names this instance's own `/v1/parties/{sovereign_id}/package`:
+
+| File | Body | Checked on upload |
+|---|---|---|
+| `package` | the party's complete signed federation package, offers included | `spec` is `federation-package/v1`; `sovereign_id` equals the path's; the body is in RFC 8785 canonical form; its signature verifies under the entry's bound key |
+| `ca` | one or more PEM `CERTIFICATE` blocks, nothing else but whitespace | each block parses as an X.509 certificate with the CA flag set |
+
+Rules for both:
+
+1. **An entry must exist first.** A file never claims a `sovereign_id`; the entry's first publish
+   binds the key. An upload with no entry is refused with 409.
+2. **Signed by the bound key.** `X-Saltlick-Key` must be the entry's bound key and the request
+   signature must verify under it (403 otherwise). A key is rotated through the entry, never
+   through a file.
+3. **Same limits as an entry:** the 64 KiB body cap and the per-source write budget.
+4. **Stored and served byte for byte.** `GET` carries `X-Saltlick-Bound-Key` beside the bytes.
+5. **Removed with the entry.** Deleting or clearing the entry deletes its files.
+
+**The directory does not compare the files with the entry.** A hosted package is not checked
+against the pointer's `package_sha256`, and a hosted CA is not checked against the package's
+`identity.ca_fingerprint`: the pointer and the files are written in separate requests, and the
+reader makes both checks itself whatever the directory did. The canonical-form rule is what
+makes the stored bytes the bytes `package_sha256` is computed over.
+
+**Offers.** The refusal of `transport_offer`, `data_offer` and `cut` applies to the entry, which
+is what the listing reads. A hosted package is a file its party chose to publish, served as the
+party's own public host would serve it; the listing shows a link to it and takes nothing from it.
+
+The out-of-band act is unchanged: the two parties read each other's verifying key and CA
+fingerprint aloud, and a reader checks the hosted files against those, not against the
+directory.
+
 ## Write authenticity — and what it is NOT
 
 Anyone may read. Writes need to be controlled or one party could overwrite another's entry.
@@ -90,13 +125,25 @@ the key means an operator must clear the entry — a plainly administrative act,
 ## API
 
 ```
-GET    /v1/parties                    list: sovereign_id, spec, issued (packages only), expires, expired(bool)
-GET    /v1/parties/{sovereign_id}     the stored entry, byte-for-byte as submitted
-PUT    /v1/parties/{sovereign_id}     publish or replace; TOFU rules above
-DELETE /v1/parties/{sovereign_id}     signed by the bound key
-GET    /healthz                       liveness
-GET    /v1/spec                       which entry formats this instance accepts
+GET    /v1/parties                          list: sovereign_id, spec, issued (packages only), expires,
+                                            expired(bool), bound_key, package/ca (paths, when hosted)
+GET    /v1/parties/{sovereign_id}           the stored entry, byte-for-byte as submitted
+PUT    /v1/parties/{sovereign_id}           publish or replace; TOFU rules above
+DELETE /v1/parties/{sovereign_id}           signed by the bound key; removes the hosted files too
+GET    /v1/parties/{sovereign_id}/package   the hosted package, byte-for-byte (application/json)
+PUT    /v1/parties/{sovereign_id}/package   host or replace it; rules below
+GET    /v1/parties/{sovereign_id}/ca        the hosted CA certificate(s), byte-for-byte
+                                            (application/pem-certificate-chain)
+PUT    /v1/parties/{sovereign_id}/ca        host or replace them; rules below
+GET    /healthz                             liveness
+GET    /v1/spec                             which entry formats this instance accepts
 ```
+
+Every write carries `X-Saltlick-Key` (except DELETE) and `X-Saltlick-Signature`, an Ed25519
+signature over the request statement: five newline-terminated lines `saltlick-request/v1`, the
+method, the path below `/v1/parties/` (`<sovereign_id>`, `<sovereign_id>/package` or
+`<sovereign_id>/ca`), `sha256:` + hex of the body, and the presented key or `-`. The path line
+keeps a signature for one resource from being replayed against another.
 
 `GET` returns the submitted bytes **unaltered** — a consumer must be able to verify the
 signature over exactly what was signed. Never re-serialise, re-order, or pretty-print stored
@@ -122,7 +169,8 @@ the consumer decides.
 - **SQLite** for storage — one file, trivially backed up, no external database to operate.
 - Container image, and Terraform to stand one up.
 - Tests must cover: TOFU binding, rejection of a second party overwriting an entry, rejection of
-  `transport_offer`/`data_offer`/`cut`, byte-exact round-trip of stored bytes, expired-but-served.
+  `transport_offer`/`data_offer`/`cut` in an entry, byte-exact round-trip of stored bytes,
+  expired-but-served, and for hosted files every refusal above and the round trip.
 
 ## Governance
 
