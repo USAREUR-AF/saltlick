@@ -98,6 +98,7 @@ func New(st *store.Store, log *slog.Logger, now func() time.Time) *Server {
 // out of scope.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /v1/spec", s.spec)
 	mux.HandleFunc("GET /v1/parties", s.list)
@@ -141,6 +142,15 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "listing entries: %v", err)
 		return
 	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"spec":    pkgv1.SpecVersion,
+		"parties": s.listItems(entries),
+	})
+}
+
+// listItems is the catalogue row for each stored entry, shared by the JSON
+// list and the home page.
+func (s *Server) listItems(entries []store.Entry) []listItem {
 	today := s.today()
 	items := make([]listItem, 0, len(entries))
 	for _, e := range entries {
@@ -157,10 +167,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			BoundKey:    e.BoundKey,
 		})
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"spec":    pkgv1.SpecVersion,
-		"parties": items,
-	})
+	return items
 }
 
 // get returns the stored package bytes unaltered.
