@@ -429,3 +429,6 @@ Each coalition or alliance runs its own instance. There is no global one.
 The name restates the invariant: mountain goats travel real distances to a mineral lick, a
 known fixed location that nobody owns, and being there grants you nothing.
 
+## Licence
+
+`saltlick` was written by U.S. Federal government employees. In the U.S. it is not subject to copyright and is in the public domain; in countries where copyright is recognized, it is released under the [Apache License 2.0](LICENSE). See [INTENT.md](INTENT.md).
