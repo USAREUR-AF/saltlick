@@ -80,7 +80,7 @@ func usage() {
   saltlick log    -db saltlick.db
   saltlick keygen [-out <prefix>]
   saltlick sign   -key <file> -package <file> [-id <sovereign_id>]
-  saltlick sign   -key <file> -upload package|ca -file <file> -id <sovereign_id>
+  saltlick sign   -key <file> -upload package|ca|spiffe-bundle -file <file> -id <sovereign_id>
 
 Advisory only. Being listed grants access to nothing, and nothing here
 establishes that a party is who it claims to be.
@@ -262,7 +262,7 @@ func sign(args []string) error {
 	method := fs.String("method", http.MethodPut, "request method the headers are for")
 	idFlag := fs.String("id", "", "sovereign_id (defaults to the one in the package)")
 	outFile := fs.String("out", "", "write the signed package here instead of stdout")
-	upload := fs.String("upload", "", "print the headers to host a file beside the entry: package or ca (with -file and -id)")
+	upload := fs.String("upload", "", "print the headers to host a file beside the entry: package, ca or spiffe-bundle (with -file and -id)")
 	uploadFile := fs.String("file", "", "the file to upload with -upload; sent unchanged")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -293,8 +293,8 @@ func sign(args []string) error {
 	}
 
 	if *upload != "" {
-		if *upload != "package" && *upload != "ca" {
-			return errors.New("-upload is package or ca")
+		if *upload != "package" && *upload != "ca" && *upload != "spiffe-bundle" {
+			return errors.New("-upload is package, ca or spiffe-bundle")
 		}
 		if *idFlag == "" || *uploadFile == "" {
 			return errors.New("-upload needs -id and -file")

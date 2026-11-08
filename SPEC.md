@@ -73,15 +73,18 @@ which of the two it is.
 
 ## Hosted files: a party with no public host
 
-A party behind NAT, with no public host of its own, keeps two files beside its entry, and its
-pointer's `package_url` names this instance's own `/v1/parties/{sovereign_id}/package`:
+A party behind NAT, with no public host of its own, keeps up to three files beside its entry,
+and its pointer's `package_url` names this instance's own `/v1/parties/{sovereign_id}/package`:
 
 | File | Body | Checked on upload |
 |---|---|---|
 | `package` | the party's complete signed federation package, offers included | `spec` is `federation-package/v1`; `sovereign_id` equals the path's; the body is in RFC 8785 canonical form; its signature verifies under the entry's bound key |
 | `ca` | one or more PEM `CERTIFICATE` blocks, nothing else but whitespace | each block parses as an X.509 certificate with the CA flag set |
+| `spiffe-bundle` | the party's SPIFFE trust bundle: the JWKS document `spire-server bundle show -format spiffe` prints | strict JSON (no duplicate member names, integers only); a JSON object with a non-empty `keys` array; every key an object whose `use` is `x509-svid` or `jwt-svid`; every `x509-svid` key's `x5c` a non-empty array whose first element is the standard base64 of a DER X.509 certificate; `spiffe_sequence` and `spiffe_refresh_hint`, when present, non-negative integers |
 
-Rules for both:
+A body that is not what its path names is refused with 422.
+
+Rules for all three:
 
 1. **An entry must exist first.** A file never claims a `sovereign_id`; the entry's first publish
    binds the key. An upload with no entry is refused with 409.
@@ -89,7 +92,10 @@ Rules for both:
    signature must verify under it (403 otherwise). A key is rotated through the entry, never
    through a file.
 3. **Same limits as an entry:** the 64 KiB body cap and the per-source write budget.
-4. **Stored and served byte for byte.** `GET` carries `X-Saltlick-Bound-Key` beside the bytes.
+4. **Stored and served byte for byte, with the signature that wrote them.** `GET` carries
+   `X-Saltlick-Bound-Key` beside the bytes, and the upload's own `X-Saltlick-Key`,
+   `X-Saltlick-Signature` and `X-Saltlick-Resource` (below). Content types: `package` and
+   `spiffe-bundle` `application/json`, `ca` `application/pem-certificate-chain`.
 5. **Removed with the entry.** Deleting or clearing the entry deletes its files.
 
 **The directory does not compare the files with the entry.** A hosted package is not checked
@@ -105,6 +111,43 @@ party's own public host would serve it; the listing shows a link to it and takes
 The out-of-band act is unchanged: the two parties read each other's verifying key and CA
 fingerprint aloud, and a reader checks the hosted files against those, not against the
 directory.
+
+### Checking a hosted file against the key read aloud
+
+The signed package names its CA through `identity.ca_fingerprint`; nothing in it names the
+SPIFFE bundle. So every hosted file is served with the request signature of the upload that
+stored it, and a reader checks the bytes against the party's verifying key directly. A `GET` of
+a hosted file carries:
+
+| Header | Value |
+|---|---|
+| `X-Saltlick-Key` | the `X-Saltlick-Key` value the upload presented, exactly as presented: 44 base64 characters, the raw 32-byte Ed25519 key |
+| `X-Saltlick-Signature` | the upload's request signature: 88 base64 characters, a 64-byte Ed25519 signature |
+| `X-Saltlick-Resource` | `<sovereign_id>/<kind>`: `xaa/package`, `xaa/ca` or `xaa/spiffe-bundle` |
+
+The signature covers exactly these bytes, five lines each ending in a single `\n` (0x0A), no
+carriage returns, no trailing whitespace:
+
+```
+saltlick-request/v1\n
+PUT\n
+<sovereign_id>/<kind>\n
+sha256:<64 lowercase hex: SHA-256 of the response body exactly as received>\n
+<the X-Saltlick-Key value>\n
+```
+
+A reader:
+
+1. Checks that `X-Saltlick-Key` equals the verifying key the two parties read aloud.
+2. Checks that `X-Saltlick-Resource` is the sovereign_id and kind it asked for; the directory
+   sends it for convenience, and the reader builds line 3 from its own request.
+3. Builds the statement above from the body it received.
+4. Verifies `X-Saltlick-Signature` over it with Ed25519 (RFC 8032, pure, no prehash) under the
+   key read aloud.
+
+A file that fails is not the party's. The `X-Saltlick-Key` names the key that wrote the file,
+which after a rotation of the entry's key differs from `X-Saltlick-Bound-Key` until the party
+uploads the file again. A file stored without a signature is served without the three headers.
 
 ## Write authenticity — and what it is NOT
 
@@ -126,23 +169,29 @@ the key means an operator must clear the entry — a plainly administrative act,
 
 ```
 GET    /v1/parties                          list: sovereign_id, spec, issued (packages only), expires,
-                                            expired(bool), bound_key, package/ca (paths, when hosted)
+                                            expired(bool), bound_key, package/ca/spiffe_bundle
+                                            (paths, when hosted)
 GET    /v1/parties/{sovereign_id}           the stored entry, byte-for-byte as submitted
 PUT    /v1/parties/{sovereign_id}           publish or replace; TOFU rules above
 DELETE /v1/parties/{sovereign_id}           signed by the bound key; removes the hosted files too
 GET    /v1/parties/{sovereign_id}/package   the hosted package, byte-for-byte (application/json)
-PUT    /v1/parties/{sovereign_id}/package   host or replace it; rules below
+PUT    /v1/parties/{sovereign_id}/package   host or replace it; rules above
 GET    /v1/parties/{sovereign_id}/ca        the hosted CA certificate(s), byte-for-byte
                                             (application/pem-certificate-chain)
-PUT    /v1/parties/{sovereign_id}/ca        host or replace them; rules below
+PUT    /v1/parties/{sovereign_id}/ca        host or replace them; rules above
+GET    /v1/parties/{sovereign_id}/spiffe-bundle
+                                            the hosted SPIFFE trust bundle, byte-for-byte
+                                            (application/json)
+PUT    /v1/parties/{sovereign_id}/spiffe-bundle
+                                            host or replace it; rules above
 GET    /healthz                             liveness
 GET    /v1/spec                             which entry formats this instance accepts
 ```
 
 Every write carries `X-Saltlick-Key` (except DELETE) and `X-Saltlick-Signature`, an Ed25519
 signature over the request statement: five newline-terminated lines `saltlick-request/v1`, the
-method, the path below `/v1/parties/` (`<sovereign_id>`, `<sovereign_id>/package` or
-`<sovereign_id>/ca`), `sha256:` + hex of the body, and the presented key or `-`. The path line
+method, the path below `/v1/parties/` (`<sovereign_id>`, `<sovereign_id>/package`,
+`<sovereign_id>/ca` or `<sovereign_id>/spiffe-bundle`), `sha256:` + hex of the body, and the presented key or `-`. The path line
 keeps a signature for one resource from being replayed against another.
 
 `GET` returns the submitted bytes **unaltered** — a consumer must be able to verify the
@@ -170,7 +219,8 @@ the consumer decides.
 - Container image, and Terraform to stand one up.
 - Tests must cover: TOFU binding, rejection of a second party overwriting an entry, rejection of
   `transport_offer`/`data_offer`/`cut` in an entry, byte-exact round-trip of stored bytes,
-  expired-but-served, and for hosted files every refusal above and the round trip.
+  expired-but-served, and for hosted files every refusal above, the round trip, and that the
+  served signature verifies under the writer's key and fails for altered bytes.
 
 ## Governance
 

@@ -30,12 +30,12 @@ a { color: var(--accent); }
 </style></head><body>
 <h1>saltlick</h1>
 <p class="sub">The peering directory for goatnets that federate with each other.</p>
-<p class="lead"><strong>Listing grants nothing.</strong> Each party publishes a signed pointer: who it is, where its signed federation package can be fetched, the package's digest, and an expiry date. A party with no public host of its own keeps its package and its CA certificate here, beside its entry. A counterparty's federation driver looks the party up, fetches the package and the CA, and checks the signatures, the digest and the CA fingerprint itself. This directory does not vouch for who published an entry; the two parties read each other's verifying key and CA fingerprint aloud once, by voice.</p>
+<p class="lead"><strong>Listing grants nothing.</strong> Each party publishes a signed pointer: who it is, where its signed federation package can be fetched, the package's digest, and an expiry date. A party with no public host of its own keeps its package, its CA certificate and its SPIFFE trust bundle here, beside its entry, each served with the signature of the key that uploaded it. A counterparty's federation driver looks the party up, fetches the files, and checks the signatures, the digest and the CA fingerprint itself. This directory does not vouch for who published an entry; the two parties read each other's verifying key and CA fingerprint aloud once, by voice.</p>
 
 <h2>Parties listed</h2>
 {{if .Parties}}<table>
 <tr><th>Party</th><th>Entry format</th><th>Expires</th><th>Hosted here</th></tr>
-{{range .Parties}}<tr{{if .Expired}} class="expired"{{end}}><td><a href="/v1/parties/{{.SovereignID}}"><code>{{.SovereignID}}</code></a></td><td><code>{{.Spec}}</code></td><td>{{.Expires}}{{if .Expired}} (expired){{end}}</td><td>{{if .Package}}<a href="{{.Package}}">package</a>{{end}}{{if and .Package .CA}} · {{end}}{{if .CA}}<a href="{{.CA}}">CA</a>{{end}}</td></tr>
+{{range .Parties}}<tr{{if .Expired}} class="expired"{{end}}><td><a href="/v1/parties/{{.SovereignID}}"><code>{{.SovereignID}}</code></a></td><td><code>{{.Spec}}</code></td><td>{{.Expires}}{{if .Expired}} (expired){{end}}</td><td>{{$sep := false}}{{if .Package}}<a href="{{.Package}}">package</a>{{$sep = true}}{{end}}{{if .CA}}{{if $sep}} · {{end}}<a href="{{.CA}}">CA</a>{{$sep = true}}{{end}}{{if .SPIFFEBundle}}{{if $sep}} · {{end}}<a href="{{.SPIFFEBundle}}">SPIFFE bundle</a>{{end}}</td></tr>
 {{end}}</table>{{else}}<p>No parties are listed yet.</p>{{end}}
 
 <h2>Using it</h2>
@@ -52,6 +52,8 @@ a { color: var(--accent); }
 <tr><td><code>PUT /v1/parties/&lt;id&gt;/package</code></td><td>Host or replace the package, signed by the entry's bound key</td></tr>
 <tr><td><code>GET /v1/parties/&lt;id&gt;/ca</code></td><td>The party's CA certificate(s), PEM, byte for byte</td></tr>
 <tr><td><code>PUT /v1/parties/&lt;id&gt;/ca</code></td><td>Host or replace the CA certificate(s), signed by the entry's bound key</td></tr>
+<tr><td><code>GET /v1/parties/&lt;id&gt;/spiffe-bundle</code></td><td>The party's SPIFFE trust bundle, JSON, byte for byte</td></tr>
+<tr><td><code>PUT /v1/parties/&lt;id&gt;/spiffe-bundle</code></td><td>Host or replace the SPIFFE trust bundle, signed by the entry's bound key</td></tr>
 <tr><td><code>GET /v1/spec</code></td><td>The entry formats this instance accepts</td></tr>
 <tr><td><code>GET /healthz</code></td><td>Liveness</td></tr>
 </table>

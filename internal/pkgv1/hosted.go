@@ -11,12 +11,14 @@ import (
 	"github.com/usareur-af/saltlick/internal/canonical"
 )
 
-// A party with no public host of its own may keep two files beside its entry:
-// its signed federation package and its CA certificate. The directory serves
-// them as the party's own host would. It does not read them into the listing,
-// index them or judge them, and a reader checks both exactly as it would check
-// a file fetched from anywhere else: the package against the key it bound out
-// of band, the CA against the package's identity.ca_fingerprint.
+// A party with no public host of its own may keep three files beside its
+// entry: its signed federation package, its CA certificate and its SPIFFE trust
+// bundle. The directory serves them as the party's own host would. It does not
+// read them into the listing, index them or judge them, and a reader checks
+// each exactly as it would check a file fetched from anywhere else: the package
+// against the key it bound out of band, the CA against the package's
+// identity.ca_fingerprint, and any of the three against the request signature
+// served with it (ParseSPIFFEBundle is in spiffe.go).
 
 // ParseHostedPackage reads the body of a package upload: the party's complete
 // signed federation package, offers included. It refuses anything that is not

@@ -158,7 +158,9 @@ func TestHostedCARoundTripsByteForByteAndIsListed(t *testing.T) {
 func TestHostedFileWithoutAnEntryIsRefused(t *testing.T) {
 	h := newHarness(t)
 	k := testsupport.NewKey(t, "no-entry")
-	for kind, b := range map[string][]byte{"package": fullPackage(t, k, "xaa"), "ca": certPEM(t, true)} {
+	for kind, b := range map[string][]byte{
+		"package": fullPackage(t, k, "xaa"), "ca": certPEM(t, true), "spiffe-bundle": spiffeBundle(t),
+	} {
 		resp := h.host("xaa", kind, k, b)
 		mustStatus(t, resp, http.StatusConflict)
 		resp.Body.Close()
@@ -273,7 +275,9 @@ func TestDeletingTheEntryDeletesItsHostedFiles(t *testing.T) {
 	h := newHarness(t)
 	k := testsupport.NewKey(t, "delete-hosted")
 	withEntry(t, h, k, "xaa")
-	for kind, b := range map[string][]byte{"package": fullPackage(t, k, "xaa"), "ca": certPEM(t, true)} {
+	for kind, b := range map[string][]byte{
+		"package": fullPackage(t, k, "xaa"), "ca": certPEM(t, true), "spiffe-bundle": spiffeBundle(t),
+	} {
 		resp := h.host("xaa", kind, k, b)
 		mustStatus(t, resp, http.StatusCreated)
 		resp.Body.Close()
@@ -281,7 +285,7 @@ func TestDeletingTheEntryDeletesItsHostedFiles(t *testing.T) {
 	resp := h.delete("xaa", k.Priv)
 	mustStatus(t, resp, http.StatusNoContent)
 	resp.Body.Close()
-	for _, p := range []string{"/v1/parties/xaa/package", "/v1/parties/xaa/ca"} {
+	for _, p := range []string{"/v1/parties/xaa/package", "/v1/parties/xaa/ca", "/v1/parties/xaa/spiffe-bundle"} {
 		mustStatus(t, h.get(p), http.StatusNotFound)
 	}
 
