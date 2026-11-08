@@ -43,14 +43,14 @@ Exposure is safe because the service grants nothing and nothing it serves is tru
 | Entries are self-verifying | A package carries a signature over its own canonical form. A consumer checks it against a key bound out of band, so a tampered or forged entry fails at the consumer |
 | Writes are trust-on-first-use | The first `PUT` for a `sovereign_id` binds the key it presents; every later write must be signed by that key |
 | Offers are refused in entries | An entry carrying `transport_offer`, `data_offer` or `cut` is refused with HTTP 422, so the listing never shows reachability, release sets or contacts |
-| Hosted files are the party's own | A party with no public host keeps its signed package and CA certificate beside its entry; they are signed by the entry's key, checked on upload, and served byte for byte for the reader to verify |
+| Hosted files are the party's own | A party with no public host keeps its signed package, CA certificate and SPIFFE trust bundle beside its entry; each is signed by the entry's key, checked on upload, and served byte for byte with the upload's signature for the reader to verify |
 | No accounts | There is nothing to log in to and no credential to steal. Authentication would protect nothing, because nothing served is trusted |
 
 What it exposes:
 
 | Request | Who |
 |---|---|
-| `GET` — list, entry, hosted package and CA, spec, health | Anyone |
+| `GET` — list, entry, hosted package, CA and SPIFFE bundle, spec, health | Anyone |
 | `PUT`, `DELETE` | Anyone holding the bound key; the request is signed |
 
 What protects it:
@@ -121,24 +121,30 @@ A counterparty uses it in four steps, and the directory is an input to none of t
 
 ## A party with no public host
 
-A party behind NAT keeps its package and CA certificate here. In order:
+A party behind NAT keeps its package, CA certificate and SPIFFE trust bundle here. In order:
 
 1. `PUT /v1/parties/xaa` — the pointer, with `package_url` set to
    `https://<this instance>/v1/parties/xaa/package`. This binds the key on first use.
 2. `PUT /v1/parties/xaa/package` — the canonical signed package, offers included.
 3. `PUT /v1/parties/xaa/ca` — the CA certificate(s), PEM.
+4. `PUT /v1/parties/xaa/spiffe-bundle` — the SPIFFE trust bundle, when the party runs SPIRE
+   federation: the output of `spire-server bundle show -format spiffe`.
 
 | Upload | Checked |
 |---|---|
 | `package` | `federation-package/v1`; `sovereign_id` is the path's; RFC 8785 canonical bytes; signature verifies under the entry's bound key |
 | `ca` | PEM `CERTIFICATE` blocks only, each an X.509 CA certificate |
+| `spiffe-bundle` | A JSON object with a non-empty `keys` array; every key's `use` is `x509-svid` or `jwt-svid`; every `x509-svid` key's `x5c[0]` is the standard base64 of a DER X.509 certificate; `spiffe_sequence` and `spiffe_refresh_hint`, when present, are non-negative integers |
 
-Both need an existing entry (409 without one) and a request signed by the entry's bound key
-(403 otherwise), share the 64 KiB cap and the write budget, are served byte for byte, and are
-deleted with the entry. The directory does not compare them with the pointer: the reader
-recomputes the digest and checks the CA's SHA-256 against the package's
-`identity.ca_fingerprint`. The goatcore federation driver does all three uploads and both
-checks.
+Each needs an existing entry (409 without one) and a request signed by the entry's bound key
+(403 otherwise), shares the 64 KiB cap and the write budget, is served byte for byte, and is
+deleted with the entry. A body that is not what its path names is refused with 422. The
+directory does not compare the files with the pointer: the reader recomputes the digest and
+checks the CA's SHA-256 against the package's `identity.ca_fingerprint`.
+
+Each file is served with the signature of the upload that stored it, so a reader checks any of
+the three, the SPIFFE bundle included, against the key the two parties read aloud.
+[Checking a hosted file's signature](#checking-a-hosted-files-signature) shows how.
 
 ## What a recognition-only package may and may not carry
 
@@ -195,7 +201,7 @@ there.
 | `saltlick keygen [-out xaa]` | Generate an Ed25519 keypair in the encoding the API expects |
 | `saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json` | Sign a package; print the publish headers on stderr |
 | `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs |
-| `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`) beside the entry; the file is sent unchanged |
+| `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`, `-upload spiffe-bundle`) beside the entry; the file is sent unchanged |
 | `saltlick clear -db saltlick.db -id xaa -reason "key lost"` | Release a binding; logged |
 | `saltlick log -db saltlick.db` | Print the administrative log |
 
@@ -207,7 +213,7 @@ is an administrative act by an operator with the database file, and it is record
 
 | Method | Path | Does |
 |---|---|---|
-| `GET` | `/v1/parties` | List: `sovereign_id`, `spec`, `issued` (packages only), `expires`, `expired`, `bound_key`, and `package` / `ca` paths when hosted |
+| `GET` | `/v1/parties` | List: `sovereign_id`, `spec`, `issued` (packages only), `expires`, `expired`, `bound_key`, and `package` / `ca` / `spiffe_bundle` paths when hosted |
 | `GET` | `/v1/parties/{sovereign_id}` | The stored entry, byte-for-byte as submitted |
 | `PUT` | `/v1/parties/{sovereign_id}` | Publish or replace |
 | `DELETE` | `/v1/parties/{sovereign_id}` | Signed by the bound key; deletes the hosted files too |
@@ -215,6 +221,8 @@ is an administrative act by an operator with the database file, and it is record
 | `PUT` | `/v1/parties/{sovereign_id}/package` | Host or replace it; signed by the entry's bound key |
 | `GET` | `/v1/parties/{sovereign_id}/ca` | The hosted CA certificate(s), byte-for-byte, `application/pem-certificate-chain` |
 | `PUT` | `/v1/parties/{sovereign_id}/ca` | Host or replace them; signed by the entry's bound key |
+| `GET` | `/v1/parties/{sovereign_id}/spiffe-bundle` | The hosted SPIFFE trust bundle, byte-for-byte, `application/json` |
+| `PUT` | `/v1/parties/{sovereign_id}/spiffe-bundle` | Host or replace it; signed by the entry's bound key |
 | `GET` | `/v1/spec` | `spec`: the package format; `accepts`: every entry format, `saltlick-pointer/v1` and `federation-package/v1` |
 | `GET` | `/healthz` | Liveness |
 
@@ -235,8 +243,8 @@ sha256:<hex of the request body; the empty string hashed where there is no body>
 <the X-Saltlick-Key value, or "-" where there is none>
 ```
 
-The third line is the path below `/v1/parties/`: `xaa` for the entry, `xaa/package` or `xaa/ca`
-for a hosted file. It binds the method, the resource, the body and the key presented, so none of
+The third line is the path below `/v1/parties/`: `xaa` for the entry, `xaa/package`, `xaa/ca`
+or `xaa/spiffe-bundle` for a hosted file. It binds the method, the resource, the body and the key presented, so none of
 the four can be swapped for another. `saltlick sign` builds and signs it for you.
 
 ### GET returns the submitted bytes unaltered
@@ -251,7 +259,31 @@ therefore travels in headers:
 | `X-Saltlick-Expired` | `GET /v1/parties/{id}` |
 | `X-Saltlick-Bound-Key`, `X-Saltlick-Expires` | `GET /v1/parties/{id}`; the bound key also on the hosted files |
 | `X-Saltlick-Issued` | `GET /v1/parties/{id}`, packages only |
+| `X-Saltlick-Key`, `X-Saltlick-Signature`, `X-Saltlick-Resource` | `GET` of a hosted file: the key the upload presented, its request signature, and the statement's resource line |
 | `X-Saltlick-Advisory` | Every response |
+
+### Checking a hosted file's signature
+
+A hosted file's `GET` carries the upload's `X-Saltlick-Key`, `X-Saltlick-Signature` and
+`X-Saltlick-Resource`. Check that `X-Saltlick-Key` is the key the two parties read aloud,
+rebuild the request statement from the headers and the bytes received, and verify the signature
+over it with Ed25519 under the key read aloud:
+
+```bash
+curl -s -D h.txt https://directory.example/v1/parties/xaa/spiffe-bundle -o bundle.json
+hdr() { grep -i "^$1:" h.txt | cut -d' ' -f2 | tr -d '\r'; }
+printf 'saltlick-request/v1\nPUT\n%s\nsha256:%s\n%s\n' \
+  "$(hdr X-Saltlick-Resource)" "$(sha256sum bundle.json | cut -d' ' -f1)" "$(hdr X-Saltlick-Key)" > statement
+hdr X-Saltlick-Signature | base64 -d > sig
+# the key read aloud, as an OpenSSL public key
+{ printf '302a300506032b6570032100' | xxd -r -p; printf '%s' "<key read aloud>" | base64 -d; } |
+  openssl pkey -pubin -inform DER -out xaa.pub.pem
+openssl pkeyutl -verify -pubin -inkey xaa.pub.pem -rawin -in statement -sigfile sig
+```
+
+`statement` is the exact byte string the signature covers. `X-Saltlick-Key` is the key that
+wrote the file; after the entry's key rotates it differs from `X-Saltlick-Bound-Key` until the
+party uploads the file again.
 
 ### Expiry is reported, never enforced
 
@@ -360,7 +392,8 @@ curl -s https://directory.example/v1/parties/xaa -o fetched.json
 cmp xaa.signed.json fetched.json && echo identical
 ```
 
-Host a CA certificate beside the entry (the package the same way, with `-upload package`):
+Host a CA certificate beside the entry (the package and the SPIFFE bundle the same way, with
+`-upload package` and `-upload spiffe-bundle`):
 
 ```bash
 saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa
@@ -406,9 +439,10 @@ load-bearing.
 | `internal/httpapi/server.go` | The HTTP surface. Its package comment states what may not be added and why |
 | `internal/pkgv1/package.go` | Reading a package as a directory entry; the offer-block refusal |
 | `internal/pkgv1/pointer.go` | Reading a pointer record |
+| `internal/pkgv1/hosted.go`, `internal/pkgv1/spiffe.go` | Checking a hosted package, CA and SPIFFE bundle on upload |
 | `internal/writeauth/writeauth.go` | Trust-on-first-use, and what it explicitly does not establish |
 | `internal/canonical/` | Strict JSON reading and RFC 8785 canonicalisation, for signature checking |
-| `internal/store/store.go` | SQLite. The `package` column holds the submitted bytes as a BLOB |
+| `internal/store/store.go` | SQLite. The `package` and hosted `body` columns hold the submitted bytes as a BLOB; each hosted file keeps the key and signature that wrote it |
 | `internal/httpapi/ratelimit.go` | Per-source token buckets and the client-address rule |
 | `deploy/`, `terraform/` | Running an instance: docker compose with Caddy, and an AWS module |
 

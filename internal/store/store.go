@@ -2,8 +2,9 @@
 //
 // One rule governs the schema: the package column holds the bytes exactly as
 // they were submitted, as a BLOB, and nothing in this repository rewrites them.
-// The same holds for the hosted table, which keeps a party's package and CA
-// certificate beside its entry.
+// The same holds for the hosted table, which keeps a party's package, CA
+// certificate and SPIFFE trust bundle beside its entry, each with the key and
+// request signature that wrote it.
 // A consumer verifies a signature over exactly what was signed, so any
 // re-serialisation -- re-ordering members, re-indenting, round-tripping through
 // a struct -- destroys the entry's only useful property.
@@ -58,6 +59,8 @@ CREATE TABLE IF NOT EXISTS hosted (
   kind         TEXT NOT NULL,
   body         BLOB NOT NULL,
   updated      TEXT NOT NULL,
+  writer_key   TEXT NOT NULL DEFAULT '',
+  signature    TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (sovereign_id, kind)
 );
 CREATE TABLE IF NOT EXISTS admin_log (
@@ -87,7 +90,43 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
+	if err := addHostedSignatureColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("adding the hosted signature columns: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// addHostedSignatureColumns brings a hosted table created without the
+// writer_key and signature columns up to the current schema. A row stored
+// without them keeps empty values and is served without the signature headers.
+func addHostedSignatureColumns(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('hosted')`)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"writer_key", "signature"} {
+		if have[col] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE hosted ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close closes the underlying database.
@@ -187,16 +226,30 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 
 // The kinds of file a party may host beside its entry.
 const (
-	KindPackage = "package" // the party's signed federation package, canonical bytes
-	KindCA      = "ca"      // the party's CA certificate(s), PEM
+	KindPackage      = "package"       // the party's signed federation package, canonical bytes
+	KindCA           = "ca"            // the party's CA certificate(s), PEM
+	KindSPIFFEBundle = "spiffe-bundle" // the party's SPIFFE trust bundle, JSON
 )
 
 // ErrNoFile is returned when a party hosts no file of the kind asked for.
 var ErrNoFile = errors.New("no file of that kind for that sovereign_id")
 
-// PutFile stores a hosted file exactly as received, replacing any earlier one
-// of the same kind. The caller has decided the write is permitted.
-func (s *Store) PutFile(ctx context.Context, id, kind string, body []byte, now time.Time) (replaced bool, err error) {
+// HostedFile is a file kept beside an entry, with the write that stored it.
+type HostedFile struct {
+	Body []byte // exactly as received
+	// WriterKey is the X-Saltlick-Key value the upload presented, exactly as
+	// presented: the key line of the request statement Signature covers.
+	WriterKey string
+	// Signature is the upload's request signature, base64. Empty for a row
+	// stored before the column existed.
+	Signature string
+	Updated   time.Time
+}
+
+// PutFile stores a hosted file exactly as received, with the key and request
+// signature that wrote it, replacing any earlier one of the same kind. The
+// caller has decided the write is permitted.
+func (s *Store) PutFile(ctx context.Context, id, kind string, f *HostedFile, now time.Time) (replaced bool, err error) {
 	var one int
 	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&one)
 	switch {
@@ -207,20 +260,32 @@ func (s *Store) PutFile(ctx context.Context, id, kind string, body []byte, now t
 		replaced = true
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO hosted (sovereign_id, kind, body, updated) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(sovereign_id, kind) DO UPDATE SET body = excluded.body, updated = excluded.updated`,
-		id, kind, body, now.UTC().Format(time.RFC3339))
+		`INSERT INTO hosted (sovereign_id, kind, body, updated, writer_key, signature) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(sovereign_id, kind) DO UPDATE SET
+		   body = excluded.body, updated = excluded.updated,
+		   writer_key = excluded.writer_key, signature = excluded.signature`,
+		id, kind, f.Body, now.UTC().Format(time.RFC3339), f.WriterKey, f.Signature)
 	return replaced, err
 }
 
-// GetFile returns a hosted file's bytes, or ErrNoFile.
-func (s *Store) GetFile(ctx context.Context, id, kind string) ([]byte, error) {
-	var b []byte
-	err := s.db.QueryRowContext(ctx, `SELECT body FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&b)
+// GetFile returns a hosted file, or ErrNoFile.
+func (s *Store) GetFile(ctx context.Context, id, kind string) (*HostedFile, error) {
+	var f HostedFile
+	var updated string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT body, writer_key, signature, updated FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind,
+	).Scan(&f.Body, &f.WriterKey, &f.Signature, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoFile
 	}
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	if f.Body == nil {
+		f.Body = []byte{}
+	}
+	f.Updated, _ = time.Parse(time.RFC3339, updated)
+	return &f, nil
 }
 
 // HostedKinds returns, per sovereign_id, the kinds of file it hosts.

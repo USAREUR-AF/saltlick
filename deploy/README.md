@@ -128,7 +128,9 @@ trust-on-first-use key binding, and each would have to republish.
 docker compose pull && docker compose up -d
 ```
 
-The volume is untouched, so entries and their key bindings survive.
+The volume is untouched, so entries, their key bindings and their hosted files survive. On
+start the service adds any column the current schema has and the database lacks; there is
+nothing to run by hand.
 
 ## Run exactly one
 

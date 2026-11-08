@@ -109,6 +109,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/package", s.putHosted(store.KindPackage))
 	mux.HandleFunc("GET /v1/parties/{sovereign_id}/ca", s.getHosted(store.KindCA))
 	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/ca", s.putHosted(store.KindCA))
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/spiffe-bundle", s.getHosted(store.KindSPIFFEBundle))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/spiffe-bundle", s.putHosted(store.KindSPIFFEBundle))
 	return mux
 }
 
@@ -135,10 +137,11 @@ type listItem struct {
 	Expires  string `json:"expires"`
 	Expired  bool   `json:"expired"`
 	BoundKey string `json:"bound_key"`
-	// Package and CA are the paths of the files the party hosts here, omitted
-	// when it hosts none.
-	Package string `json:"package,omitempty"`
-	CA      string `json:"ca,omitempty"`
+	// Package, CA and SPIFFEBundle are the paths of the files the party hosts
+	// here, each omitted when it hosts no file of that kind.
+	Package      string `json:"package,omitempty"`
+	CA           string `json:"ca,omitempty"`
+	SPIFFEBundle string `json:"spiffe_bundle,omitempty"`
 }
 
 // list is a catalogue and nothing more. It has no filters, no sort parameter
@@ -191,6 +194,9 @@ func (s *Server) listItems(entries []store.Entry, hosted map[string]map[string]b
 		}
 		if hosted[e.SovereignID][store.KindCA] {
 			item.CA = "/v1/parties/" + e.SovereignID + "/ca"
+		}
+		if hosted[e.SovereignID][store.KindSPIFFEBundle] {
+			item.SPIFFEBundle = "/v1/parties/" + e.SovereignID + "/spiffe-bundle"
 		}
 		items = append(items, item)
 	}

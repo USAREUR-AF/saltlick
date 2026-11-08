@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -13,15 +14,18 @@ import (
 )
 
 // Hosted files. A party with no public host of its own keeps its signed
-// federation package and its CA certificate here, beside its entry, so that it
-// can federate from behind NAT without sending files to anyone.
+// federation package, its CA certificate and its SPIFFE trust bundle here,
+// beside its entry, so that it can federate from behind NAT without sending
+// files to anyone.
 //
 // The rules, in the order they are applied:
 //
 //  1. The body is read under the same 64 KiB cap as an entry, and checked for
 //     what it is: a package is a federation-package/v1 document in canonical
 //     form whose sovereign_id is the path's; a CA upload is PEM CERTIFICATE
-//     blocks, each an X.509 CA certificate.
+//     blocks, each an X.509 CA certificate; a SPIFFE bundle is a JWKS document
+//     whose keys are x509-svid keys with a parseable x5c certificate or
+//     jwt-svid keys.
 //  2. An entry must already exist. The entry's first publish is what binds the
 //     key; a file never claims a name.
 //  3. The presented key must be the entry's bound key, and the request
@@ -35,16 +39,38 @@ import (
 // digest whatever the directory did. A hosted CA is not compared with the
 // package's ca_fingerprint, for the same reason: the reader makes that check.
 //
-// Neither file is read into the listing or the home page beyond a link. A
+// Each file is stored with the X-Saltlick-Key value and the request signature
+// that wrote it, and GET serves both as headers. The request statement is
+// rebuilt by a reader from the method (PUT), the resource (<id>/<kind>), the
+// SHA-256 of the bytes served and that key, so a reader can check any hosted
+// file against the key the two parties read aloud, including the SPIFFE bundle,
+// which nothing in the signed package names.
+//
+// No file is read into the listing or the home page beyond a link. A
 // package hosted here carries whatever its party chose to put in it, offers
 // included; it is served as the party's own host would serve it, and the
 // directory takes nothing from it.
 
 // contentType is what each kind of hosted file is served as.
 var contentType = map[string]string{
-	store.KindPackage: "application/json",
-	store.KindCA:      "application/pem-certificate-chain",
+	store.KindPackage:      "application/json",
+	store.KindCA:           "application/pem-certificate-chain",
+	store.KindSPIFFEBundle: "application/json",
 }
+
+// Headers a GET of a hosted file carries, beside X-Saltlick-Bound-Key.
+const (
+	// HeaderWriterKey is the X-Saltlick-Key value the upload presented, exactly
+	// as presented. It is the bound key at the time of the upload; after a
+	// rotation it differs from X-Saltlick-Bound-Key until the file is uploaded
+	// again.
+	HeaderWriterKey = HeaderKey
+	// HeaderWriterSignature is the upload's request signature, base64.
+	HeaderWriterSignature = HeaderSignature
+	// HeaderResource is the resource line of the request statement the
+	// signature covers: <sovereign_id>/<kind>.
+	HeaderResource = "X-Saltlick-Resource"
+)
 
 func (s *Server) getHosted(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +84,7 @@ func (s *Server) getHosted(kind string) http.HandlerFunc {
 			s.writeError(w, http.StatusInternalServerError, "reading entry: %v", err)
 			return
 		}
-		b, err := s.store.GetFile(r.Context(), id, kind)
+		f, err := s.store.GetFile(r.Context(), id, kind)
 		if errors.Is(err, store.ErrNoFile) {
 			s.writeError(w, http.StatusNotFound, "%q hosts no %s here", id, kind)
 			return
@@ -70,9 +96,14 @@ func (s *Server) getHosted(kind string) http.HandlerFunc {
 		w.Header().Set("Content-Type", contentType[kind])
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set(HeaderBoundKey, e.BoundKey)
+		if f.Signature != "" {
+			w.Header().Set(HeaderWriterKey, f.WriterKey)
+			w.Header().Set(HeaderWriterSignature, f.Signature)
+			w.Header().Set(HeaderResource, id+"/"+kind)
+		}
 		w.Header().Set(HeaderAdvisory, Advisory)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(b) // byte-for-byte
+		_, _ = w.Write(f.Body) // byte-for-byte
 	}
 }
 
@@ -125,6 +156,14 @@ func (s *Server) putHosted(kind string) http.HandlerFunc {
 				return
 			}
 			resp["certificates"] = fps
+		case store.KindSPIFFEBundle:
+			b, err := pkgv1.ParseSPIFFEBundle(body)
+			if err != nil {
+				s.writeError(w, http.StatusUnprocessableEntity, "%v", err)
+				return
+			}
+			resp["x509_authorities"] = b.X509Authorities
+			resp["jwt_authorities"] = b.JWTAuthorities
 		}
 
 		s.store.Lock()
@@ -162,7 +201,11 @@ func (s *Server) putHosted(kind string) http.HandlerFunc {
 			}
 		}
 
-		replaced, err := s.store.PutFile(r.Context(), id, kind, body, s.now())
+		replaced, err := s.store.PutFile(r.Context(), id, kind, &store.HostedFile{
+			Body:      body,
+			WriterKey: presentedKeyB64,
+			Signature: base64.StdEncoding.EncodeToString(requestSig),
+		}, s.now())
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, "storing %s: %v", kind, err)
 			return

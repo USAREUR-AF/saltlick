@@ -37,11 +37,14 @@ const StatementVersion = "saltlick-request/v1"
 // binds the method, the resource in the path, the request body and the key
 // being presented, so that none of the four can be swapped for another.
 //
+// The directory keeps a hosted file's statement signature and serves it on GET,
+// so a reader rebuilds this statement from what it fetched and verifies it.
+//
 // Five lines, each terminated by a newline:
 //
 //	saltlick-request/v1
 //	<METHOD>
-//	<the path below /v1/parties/: <sovereign_id>, <sovereign_id>/package or <sovereign_id>/ca>
+//	<the path below /v1/parties/: <sovereign_id>, <sovereign_id>/package, <sovereign_id>/ca or <sovereign_id>/spiffe-bundle>
 //	sha256:<hex of the request body, empty string hashed where there is none>
 //	<presented verifying key, base64, or "-" where there is none>
 func Statement(method, sovereignID string, body []byte, presentedKey string) []byte {

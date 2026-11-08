@@ -126,6 +126,9 @@ terraform apply -var 'image=ghcr.io/usareur-af/saltlick:v1.1.0'
 The old task stops before the new one starts, so expect a few seconds where the
 directory returns 503. That is deliberate — see below.
 
+On start the service adds any column the current schema has and the database
+lacks; there is nothing to run by hand.
+
 ## The one constraint you must not break
 
 **Never raise `desired_count` above 1.**
