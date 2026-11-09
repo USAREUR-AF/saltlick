@@ -231,6 +231,13 @@ const (
 	KindSPIFFEBundle = "spiffe-bundle" // the party's SPIFFE trust bundle, JSON
 )
 
+// KindPackageFor is the kind under which a party hosts the package it signed
+// for one counterparty: "packages/<counterparty>". A party holding several
+// peerings keeps one package per counterparty, each with its own transport
+// offer, so publishing one never replaces another. The single "package" kind
+// is unchanged and independent of these.
+func KindPackageFor(counterparty string) string { return "packages/" + counterparty }
+
 // ErrNoFile is returned when a party hosts no file of the kind asked for.
 var ErrNoFile = errors.New("no file of that kind for that sovereign_id")
 
@@ -266,6 +273,22 @@ func (s *Store) PutFile(ctx context.Context, id, kind string, f *HostedFile, now
 		   writer_key = excluded.writer_key, signature = excluded.signature`,
 		id, kind, f.Body, now.UTC().Format(time.RFC3339), f.WriterKey, f.Signature)
 	return replaced, err
+}
+
+// DeleteFile removes one hosted file, or returns ErrNoFile when there is none.
+func (s *Store) DeleteFile(ctx context.Context, id, kind string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNoFile
+	}
+	return nil
 }
 
 // GetFile returns a hosted file, or ErrNoFile.

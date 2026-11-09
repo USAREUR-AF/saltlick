@@ -80,7 +80,8 @@ func usage() {
   saltlick log    -db saltlick.db
   saltlick keygen [-out <prefix>]
   saltlick sign   -key <file> -package <file> [-id <sovereign_id>]
-  saltlick sign   -key <file> -upload package|ca|spiffe-bundle -file <file> -id <sovereign_id>
+  saltlick sign   -key <file> -upload package|packages/<counterparty>|ca|spiffe-bundle -file <file> -id <sovereign_id>
+  saltlick sign   -key <file> -method DELETE -id <sovereign_id> [-upload packages/<counterparty>]
 
 Advisory only. Being listed grants access to nothing, and nothing here
 establishes that a party is who it claims to be.
@@ -262,7 +263,7 @@ func sign(args []string) error {
 	method := fs.String("method", http.MethodPut, "request method the headers are for")
 	idFlag := fs.String("id", "", "sovereign_id (defaults to the one in the package)")
 	outFile := fs.String("out", "", "write the signed package here instead of stdout")
-	upload := fs.String("upload", "", "print the headers to host a file beside the entry: package, ca or spiffe-bundle (with -file and -id)")
+	upload := fs.String("upload", "", "print the headers to host a file beside the entry: package, packages/<counterparty>, ca or spiffe-bundle (with -file and -id)")
 	uploadFile := fs.String("file", "", "the file to upload with -upload; sent unchanged")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -287,14 +288,29 @@ func sign(args []string) error {
 		if id == "" {
 			return errors.New("a delete needs -id")
 		}
-		stmt := writeauth.Statement(http.MethodDelete, id, nil, "")
+		resource := id
+		if cp, ok := strings.CutPrefix(*upload, "packages/"); ok {
+			// Withdraw one counterparty's package: -method DELETE -upload packages/<counterparty>.
+			if !pkgv1.ValidSovereignID(cp) || cp == id {
+				return errors.New("-upload packages/<counterparty> names another party's sovereign_id")
+			}
+			resource = id + "/" + *upload
+		} else if *upload != "" {
+			return errors.New("a delete takes no -upload, or -upload packages/<counterparty> to withdraw one counterparty's package")
+		}
+		stmt := writeauth.Statement(http.MethodDelete, resource, nil, "")
 		fmt.Printf("%s: %s\n", httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(ed25519.Sign(priv, stmt)))
 		return nil
 	}
 
 	if *upload != "" {
-		if *upload != "package" && *upload != "ca" && *upload != "spiffe-bundle" {
-			return errors.New("-upload is package, ca or spiffe-bundle")
+		cp, perCounterparty := strings.CutPrefix(*upload, "packages/")
+		switch {
+		case *upload == "package" || *upload == "ca" || *upload == "spiffe-bundle":
+		case perCounterparty && pkgv1.ValidSovereignID(cp) && cp != *idFlag:
+		default:
+			return errors.New("-upload is package, packages/<counterparty>, ca or spiffe-bundle; " +
+				"the counterparty is another party's sovereign_id")
 		}
 		if *idFlag == "" || *uploadFile == "" {
 			return errors.New("-upload needs -id and -file")

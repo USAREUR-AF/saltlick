@@ -50,6 +50,9 @@ a { color: var(--accent); }
 <tr><td><code>DELETE /v1/parties/&lt;id&gt;</code></td><td>Remove an entry and the files it hosts, signed by its bound key</td></tr>
 <tr><td><code>GET /v1/parties/&lt;id&gt;/package</code></td><td>The party's signed federation package, byte for byte</td></tr>
 <tr><td><code>PUT /v1/parties/&lt;id&gt;/package</code></td><td>Host or replace the package, signed by the entry's bound key</td></tr>
+<tr><td><code>GET /v1/parties/&lt;id&gt;/packages/&lt;counterparty&gt;</code></td><td>The package the party signed for one counterparty, byte for byte</td></tr>
+<tr><td><code>PUT /v1/parties/&lt;id&gt;/packages/&lt;counterparty&gt;</code></td><td>Host or replace the package for one counterparty, signed by the entry's bound key; a party with several peerings keeps one per counterparty</td></tr>
+<tr><td><code>DELETE /v1/parties/&lt;id&gt;/packages/&lt;counterparty&gt;</code></td><td>Withdraw the package for one counterparty when the peering ends, signed by the entry's bound key</td></tr>
 <tr><td><code>GET /v1/parties/&lt;id&gt;/ca</code></td><td>The party's CA certificate(s), PEM, byte for byte</td></tr>
 <tr><td><code>PUT /v1/parties/&lt;id&gt;/ca</code></td><td>Host or replace the CA certificate(s), signed by the entry's bound key</td></tr>
 <tr><td><code>GET /v1/parties/&lt;id&gt;/spiffe-bundle</code></td><td>The party's SPIFFE trust bundle, JSON, byte for byte</td></tr>

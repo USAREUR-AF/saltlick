@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/usareur-af/saltlick/internal/pkgv1"
 	"github.com/usareur-af/saltlick/internal/store"
@@ -16,7 +18,12 @@ import (
 // Hosted files. A party with no public host of its own keeps its signed
 // federation package, its CA certificate and its SPIFFE trust bundle here,
 // beside its entry, so that it can federate from behind NAT without sending
-// files to anyone.
+// files to anyone. A party holding several peerings also keeps one package per
+// counterparty at packages/<counterparty>: each peering's package carries its
+// own transport offer (endpoint, WireGuard key, link subnet), so one peering's
+// upload never replaces another's. A counterparty package is checked exactly
+// as the single package is, and its upload signature names the counterparty in
+// its resource line.
 //
 // The rules, in the order they are applied:
 //
@@ -68,13 +75,58 @@ const (
 	// HeaderWriterSignature is the upload's request signature, base64.
 	HeaderWriterSignature = HeaderSignature
 	// HeaderResource is the resource line of the request statement the
-	// signature covers: <sovereign_id>/<kind>.
+	// signature covers: <sovereign_id>/<kind>, where a counterparty package's
+	// kind is packages/<counterparty>.
 	HeaderResource = "X-Saltlick-Resource"
 )
 
-func (s *Server) getHosted(kind string) http.HandlerFunc {
+// kindOf names the hosted kind a request addresses, or refuses the path. The
+// three single kinds are fixed per route; a counterparty package's kind comes
+// from the path.
+type kindOf func(r *http.Request) (kind string, err error)
+
+func fixedKind(kind string) kindOf {
+	return func(*http.Request) (string, error) { return kind, nil }
+}
+
+// packageForCounterparty is the kind of /v1/parties/{sovereign_id}/packages/{counterparty}.
+// The counterparty has the form of a sovereign_id and is not the party itself:
+// composition refuses two packages with one sovereign_id, so a slot for oneself
+// can only ever hold a mistake. The directory does not interpret the name
+// further, does not check that the counterparty has an entry, and does not list
+// the slots in its catalogue.
+func packageForCounterparty(r *http.Request) (string, error) {
+	id, cp := r.PathValue("sovereign_id"), r.PathValue("counterparty")
+	if !pkgv1.ValidSovereignID(cp) {
+		return "", fmt.Errorf("counterparty %q is not 2-16 characters of lowercase a-z0-9-", cp)
+	}
+	if cp == id {
+		return "", fmt.Errorf("counterparty %q is the party itself; a package is never composed with its own party", cp)
+	}
+	return store.KindPackageFor(cp), nil
+}
+
+// isPackage reports whether kind holds a signed federation package: the single
+// package or one counterparty's.
+func isPackage(kind string) bool {
+	return kind == store.KindPackage || strings.HasPrefix(kind, "packages/")
+}
+
+func contentTypeOf(kind string) string {
+	if isPackage(kind) {
+		return contentType[store.KindPackage]
+	}
+	return contentType[kind]
+}
+
+func (s *Server) getHosted(kindFor kindOf) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("sovereign_id")
+		kind, err := kindFor(r)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "%v", err)
+			return
+		}
 		e, err := s.store.Get(r.Context(), id)
 		if errors.Is(err, store.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "no entry for sovereign_id %q", id)
@@ -93,7 +145,7 @@ func (s *Server) getHosted(kind string) http.HandlerFunc {
 			s.writeError(w, http.StatusInternalServerError, "reading %s: %v", kind, err)
 			return
 		}
-		w.Header().Set("Content-Type", contentType[kind])
+		w.Header().Set("Content-Type", contentTypeOf(kind))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set(HeaderBoundKey, e.BoundKey)
 		if f.Signature != "" {
@@ -107,9 +159,65 @@ func (s *Server) getHosted(kind string) http.HandlerFunc {
 	}
 }
 
-func (s *Server) putHosted(kind string) http.HandlerFunc {
+// deleteCounterpartyPackage removes one counterparty's package, so a party can
+// withdraw a peering's offer when the peering ends without deleting its entry,
+// its other packages, its CA or its key binding. The request is signed by the
+// bound key over DELETE <sovereign_id>/packages/<counterparty> with no key line,
+// as an entry's DELETE is.
+func (s *Server) deleteCounterpartyPackage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("sovereign_id")
+	kind, err := packageForCounterparty(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "%v", err)
+		return
+	}
+	requestSig, err := decodeSig(r.Header.Get(HeaderSignature))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "%s: %v", HeaderSignature, err)
+		return
+	}
+
+	s.store.Lock()
+	defer s.store.Unlock()
+
+	e, err := s.store.Get(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "no entry for sovereign_id %q", id)
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "reading entry: %v", err)
+		return
+	}
+	statement := writeauth.Statement(http.MethodDelete, id+"/"+kind, nil, "")
+	if err := writeauth.AuthoriseDelete(e.BoundKey, statement, requestSig); err != nil {
+		var refusal *writeauth.Refusal
+		if errors.As(err, &refusal) {
+			s.writeError(w, http.StatusForbidden, "%s", refusal.Reason)
+			return
+		}
+		s.writeError(w, http.StatusBadRequest, "%v", err)
+		return
+	}
+	if err := s.store.DeleteFile(r.Context(), id, kind); errors.Is(err, store.ErrNoFile) {
+		s.writeError(w, http.StatusNotFound, "%q hosts no %s here", id, kind)
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "deleting %s: %v", kind, err)
+		return
+	}
+	w.Header().Set(HeaderAdvisory, Advisory)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) putHosted(kindFor kindOf) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("sovereign_id")
+		kind, err := kindFor(r)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "%v", err)
+			return
+		}
 
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
 		if err != nil {
@@ -137,8 +245,8 @@ func (s *Server) putHosted(kind string) http.HandlerFunc {
 		// 1. What the body is.
 		var pkg *pkgv1.Package
 		resp := map[string]any{"sovereign_id": id, "kind": kind}
-		switch kind {
-		case store.KindPackage:
+		switch {
+		case isPackage(kind):
 			pkg, err = pkgv1.ParseHostedPackage(body)
 			if err != nil {
 				s.writeError(w, http.StatusUnprocessableEntity, "%v", err)
@@ -149,14 +257,14 @@ func (s *Server) putHosted(kind string) http.HandlerFunc {
 					"package sovereign_id %q does not match the path %q", pkg.SovereignID, id)
 				return
 			}
-		case store.KindCA:
+		case kind == store.KindCA:
 			fps, err := pkgv1.ParseCA(body)
 			if err != nil {
 				s.writeError(w, http.StatusUnprocessableEntity, "%v", err)
 				return
 			}
 			resp["certificates"] = fps
-		case store.KindSPIFFEBundle:
+		case kind == store.KindSPIFFEBundle:
 			b, err := pkgv1.ParseSPIFFEBundle(body)
 			if err != nil {
 				s.writeError(w, http.StatusUnprocessableEntity, "%v", err)

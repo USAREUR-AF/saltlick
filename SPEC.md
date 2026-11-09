@@ -112,6 +112,35 @@ The out-of-band act is unchanged: the two parties read each other's verifying ke
 fingerprint aloud, and a reader checks the hosted files against those, not against the
 directory.
 
+### One package per counterparty
+
+A federation package carries one `transport_offer`: one endpoint, one WireGuard key, one
+proposed link subnet. A party holding several peerings therefore signs one package per
+counterparty, and a single `package` slot would let each upload replace the last. A party keeps
+those packages at `/v1/parties/{sovereign_id}/packages/{counterparty}`, one slot per
+counterparty:
+
+- The body and its checks are those of `package`, and rules 1 to 5 above apply to each slot.
+- `{counterparty}` matches `^[a-z0-9-]{2,16}$` and differs from `{sovereign_id}`: composition
+  refuses two packages with one `sovereign_id`, so a slot for oneself can only hold a mistake.
+  Otherwise 400.
+- The resource line of the upload statement is `<sovereign_id>/packages/<counterparty>`, so the
+  served signature records which counterparty the party signed the package for. A reader checks
+  that line equals the slot it asked for, exactly as for any hosted file.
+- Uploading one slot never changes another slot or `package`.
+- `DELETE /v1/parties/{sovereign_id}/packages/{counterparty}` withdraws that one slot when the
+  peering ends, leaving the entry, its key binding and every other file. It is signed by the
+  bound key over the statement `DELETE`, `<sovereign_id>/packages/<counterparty>`, the empty
+  body's hash and `-`, as an entry's `DELETE` is; 404 when the slot holds nothing.
+- The directory does not interpret the slot name, does not check that `{counterparty}` has an
+  entry, and does not list slots in `GET /v1/parties` or on the home page. Being listed still
+  grants nothing, and the directory still computes nothing about who peers with whom; a slot is
+  the party's own statement. A slot name is readable by anyone who requests it, so a party that
+  does not want a peering visible exchanges that package another way.
+
+The package format, the single `package` slot and the pointer record are unchanged. A party with
+one peering, and a reader that does not know about slots, keep working as before.
+
 ### Checking a hosted file against the key read aloud
 
 The signed package names its CA through `identity.ca_fingerprint`; nothing in it names the
@@ -123,7 +152,7 @@ a hosted file carries:
 |---|---|
 | `X-Saltlick-Key` | the `X-Saltlick-Key` value the upload presented, exactly as presented: 44 base64 characters, the raw 32-byte Ed25519 key |
 | `X-Saltlick-Signature` | the upload's request signature: 88 base64 characters, a 64-byte Ed25519 signature |
-| `X-Saltlick-Resource` | `<sovereign_id>/<kind>`: `xaa/package`, `xaa/ca` or `xaa/spiffe-bundle` |
+| `X-Saltlick-Resource` | `<sovereign_id>/<kind>`: `xaa/package`, `xaa/packages/xab`, `xaa/ca` or `xaa/spiffe-bundle` |
 
 The signature covers exactly these bytes, five lines each ending in a single `\n` (0x0A), no
 carriage returns, no trailing whitespace:
@@ -176,6 +205,13 @@ PUT    /v1/parties/{sovereign_id}           publish or replace; TOFU rules above
 DELETE /v1/parties/{sovereign_id}           signed by the bound key; removes the hosted files too
 GET    /v1/parties/{sovereign_id}/package   the hosted package, byte-for-byte (application/json)
 PUT    /v1/parties/{sovereign_id}/package   host or replace it; rules above
+GET    /v1/parties/{sovereign_id}/packages/{counterparty}
+                                            the package the party signed for one counterparty,
+                                            byte-for-byte (application/json)
+PUT    /v1/parties/{sovereign_id}/packages/{counterparty}
+                                            host or replace it; rules above
+DELETE /v1/parties/{sovereign_id}/packages/{counterparty}
+                                            withdraw that one package; signed by the bound key
 GET    /v1/parties/{sovereign_id}/ca        the hosted CA certificate(s), byte-for-byte
                                             (application/pem-certificate-chain)
 PUT    /v1/parties/{sovereign_id}/ca        host or replace them; rules above
@@ -191,7 +227,7 @@ GET    /v1/spec                             which entry formats this instance ac
 Every write carries `X-Saltlick-Key` (except DELETE) and `X-Saltlick-Signature`, an Ed25519
 signature over the request statement: five newline-terminated lines `saltlick-request/v1`, the
 method, the path below `/v1/parties/` (`<sovereign_id>`, `<sovereign_id>/package`,
-`<sovereign_id>/ca` or `<sovereign_id>/spiffe-bundle`), `sha256:` + hex of the body, and the presented key or `-`. The path line
+`<sovereign_id>/packages/<counterparty>`, `<sovereign_id>/ca` or `<sovereign_id>/spiffe-bundle`), `sha256:` + hex of the body, and the presented key or `-`. The path line
 keeps a signature for one resource from being replayed against another.
 
 `GET` returns the submitted bytes **unaltered** — a consumer must be able to verify the
