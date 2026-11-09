@@ -190,15 +190,21 @@ func TestDeletingTheEntryDeletesItsCounterpartyPackages(t *testing.T) {
 }
 
 // deleteSlot sends DELETE /v1/parties/<id>/packages/<cp>, signing the statement
-// for resource.
-func (h *harness) deleteSlot(id, cp, resource string, signingKey ed25519.PrivateKey) *http.Response {
+// for resource over withdrawn, the package being withdrawn.
+func (h *harness) deleteSlot(id, cp, resource string, withdrawn []byte, signingKey ed25519.PrivateKey) *http.Response {
 	h.t.Helper()
-	stmt := statement(http.MethodDelete, resource, nil, "")
+	return h.deleteSlotSigned(id, cp, ed25519.Sign(signingKey, statement(http.MethodDelete, resource, withdrawn, "")))
+}
+
+// deleteSlotSigned sends DELETE /v1/parties/<id>/packages/<cp> with sig as its
+// signature, as a replay of a saved request would.
+func (h *harness) deleteSlotSigned(id, cp string, sig []byte) *http.Response {
+	h.t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, h.srv.URL+"/v1/parties/"+id+"/packages/"+cp, nil)
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	req.Header.Set(httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(ed25519.Sign(signingKey, stmt)))
+	req.Header.Set(httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(sig))
 	resp, err := h.srv.Client().Do(req)
 	if err != nil {
 		h.t.Fatal(err)
@@ -211,10 +217,11 @@ func TestOneCounterpartyPackageIsWithdrawnAlone(t *testing.T) {
 	k := testsupport.NewKey(t, "slot-withdraw")
 	withEntry(t, h, k, "xaa")
 	single := fullPackage(t, k, "xaa")
+	forXab := peeringPackage(t, k, "xaa", "192.0.2.10:51821", "169.254.10.0/31")
 	forXac := peeringPackage(t, k, "xaa", "192.0.2.10:51822", "169.254.10.2/31")
 	for kind, b := range map[string][]byte{
 		"package":      single,
-		"packages/xab": peeringPackage(t, k, "xaa", "192.0.2.10:51821", "169.254.10.0/31"),
+		"packages/xab": forXab,
 		"packages/xac": forXac,
 	} {
 		resp := h.host("xaa", kind, k, b)
@@ -222,18 +229,26 @@ func TestOneCounterpartyPackageIsWithdrawnAlone(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	// Another key, the entry's own DELETE signature, or another slot's, is refused.
+	// Another key, the entry's own DELETE signature, another slot's, a statement over
+	// the empty body, or one over other bytes than the slot holds, is refused.
 	other := testsupport.NewKey(t, "slot-withdraw-other")
 	for _, c := range []struct {
 		resource string
+		body     []byte
 		key      ed25519.PrivateKey
-	}{{"xaa/packages/xab", other.Priv}, {"xaa", k.Priv}, {"xaa/packages/xac", k.Priv}} {
-		resp := h.deleteSlot("xaa", "xab", c.resource, c.key)
+	}{
+		{"xaa/packages/xab", forXab, other.Priv},
+		{"xaa", nil, k.Priv},
+		{"xaa/packages/xac", forXab, k.Priv},
+		{"xaa/packages/xab", nil, k.Priv},
+		{"xaa/packages/xab", forXac, k.Priv},
+	} {
+		resp := h.deleteSlot("xaa", "xab", c.resource, c.body, c.key)
 		mustStatus(t, resp, http.StatusForbidden)
 		resp.Body.Close()
 	}
 
-	resp := h.deleteSlot("xaa", "xab", "xaa/packages/xab", k.Priv)
+	resp := h.deleteSlot("xaa", "xab", "xaa/packages/xab", forXab, k.Priv)
 	mustStatus(t, resp, http.StatusNoContent)
 	resp.Body.Close()
 	mustStatus(t, h.get("/v1/parties/xaa/packages/xab"), http.StatusNotFound)
@@ -246,10 +261,108 @@ func TestOneCounterpartyPackageIsWithdrawnAlone(t *testing.T) {
 	mustStatus(t, h.get("/v1/parties/xaa"), http.StatusOK)
 
 	// Gone already, or a slot name that cannot exist.
-	resp = h.deleteSlot("xaa", "xab", "xaa/packages/xab", k.Priv)
+	resp = h.deleteSlot("xaa", "xab", "xaa/packages/xab", forXab, k.Priv)
 	mustStatus(t, resp, http.StatusNotFound)
 	resp.Body.Close()
-	resp = h.deleteSlot("xaa", "xaa", "xaa/packages/xaa", k.Priv)
+	resp = h.deleteSlot("xaa", "xaa", "xaa/packages/xaa", forXab, k.Priv)
 	mustStatus(t, resp, http.StatusBadRequest)
+	resp.Body.Close()
+}
+
+// putSaved replays a saved GET of a counterparty package as a PUT: the body,
+// X-Saltlick-Key and X-Saltlick-Signature exactly as the directory served them.
+func (h *harness) putSaved(path string, body []byte, key, sig string) *http.Response {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodPut, h.srv.URL+path, bytes.NewReader(body))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(httpapi.HeaderKey, key)
+	req.Header.Set(httpapi.HeaderSignature, sig)
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return resp
+}
+
+// A withdrawal is final: anyone who saved a GET of the slot (body, key and
+// signature) cannot replay it as a PUT to restore the package, and a saved
+// DELETE cannot withdraw a later package in that slot.
+func TestAWithdrawnCounterpartyPackageCannotBeReplayedBack(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "slot-replay")
+	withEntry(t, h, k, "xaa")
+	first := peeringPackage(t, k, "xaa", "192.0.2.10:51821", "169.254.10.0/31")
+	resp := h.host("xaa", "packages/xab", k, first)
+	mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+
+	saved := h.get("/v1/parties/xaa/packages/xab")
+	mustStatus(t, saved, http.StatusOK)
+	savedBody := body(t, saved)
+	savedKey, savedSig := saved.Header.Get(httpapi.HeaderWriterKey), saved.Header.Get(httpapi.HeaderWriterSignature)
+
+	deleteSig := ed25519.Sign(k.Priv, statement(http.MethodDelete, "xaa/packages/xab", first, ""))
+	resp = h.deleteSlotSigned("xaa", "xab", deleteSig)
+	mustStatus(t, resp, http.StatusNoContent)
+	resp.Body.Close()
+
+	// The saved upload, replayed, is refused, and the slot stays empty.
+	resp = h.putSaved("/v1/parties/xaa/packages/xab", savedBody, savedKey, savedSig)
+	mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	mustStatus(t, h.get("/v1/parties/xaa/packages/xab"), http.StatusNotFound)
+
+	// The party re-signing the same bytes under the same key produces the same
+	// (deterministic) signature, so it too is refused: it uploads a new package.
+	resp = h.host("xaa", "packages/xab", k, first)
+	mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	second := peeringPackage(t, k, "xaa", "192.0.2.10:51831", "169.254.10.0/31")
+	resp = h.host("xaa", "packages/xab", k, second)
+	mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+
+	// The saved DELETE names the first package's bytes, so it does not withdraw the second.
+	resp = h.deleteSlotSigned("xaa", "xab", deleteSig)
+	mustStatus(t, resp, http.StatusForbidden)
+	resp.Body.Close()
+	if b := body(t, h.get("/v1/parties/xaa/packages/xab")); !bytes.Equal(b, second) {
+		t.Fatal("a replayed DELETE withdrew a later package")
+	}
+
+	// The single package slot keeps its old behavior: re-uploading the same bytes works.
+	single := fullPackage(t, k, "xaa")
+	for i := 0; i < 2; i++ {
+		resp = h.host("xaa", "package", k, single)
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			t.Fatalf("single package upload %d: status %d", i, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+// Deleting the entry withdraws its counterparty packages too: re-claiming the
+// name with the same key does not let a saved slot upload be replayed.
+func TestDeletingTheEntryWithdrawsItsCounterpartyPackagesForGood(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "slot-entry-replay")
+	withEntry(t, h, k, "xaa")
+	pkg := peeringPackage(t, k, "xaa", "192.0.2.10:51821", "169.254.10.0/31")
+	resp := h.host("xaa", "packages/xab", k, pkg)
+	mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+	saved := h.get("/v1/parties/xaa/packages/xab")
+	mustStatus(t, saved, http.StatusOK)
+	savedBody := body(t, saved)
+	savedKey, savedSig := saved.Header.Get(httpapi.HeaderWriterKey), saved.Header.Get(httpapi.HeaderWriterSignature)
+	resp = h.delete("xaa", k.Priv)
+	mustStatus(t, resp, http.StatusNoContent)
+	resp.Body.Close()
+	withEntry(t, h, k, "xaa")
+	resp = h.putSaved("/v1/parties/xaa/packages/xab", savedBody, savedKey, savedSig)
+	mustStatus(t, resp, http.StatusConflict)
 	resp.Body.Close()
 }

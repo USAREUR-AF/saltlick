@@ -156,7 +156,9 @@ second replace the first. So a party also keeps one package per counterparty:
 
 The counterparty `xab` fetches `GET /v1/parties/xaa/packages/xab`. Each slot is checked exactly
 as `package` is, is served byte for byte with its upload signature, and is deleted with the
-entry, or withdrawn alone with a signed `DELETE` of its path when the peering ends. The
+entry, or withdrawn alone with a signed `DELETE` of its path when the peering ends. A
+withdrawal is final: the `DELETE` statement names the bytes withdrawn, and the directory refuses
+the withdrawn upload if it is ever replayed, so returning needs a newly signed package. The
 counterparty name has the form of a `sovereign_id` and is not the party itself (400
 otherwise). The upload signature's resource line is `xaa/packages/xab`, so a reader checks under
 the key read aloud that `xaa` signed this package for `xab`, not for someone else.
@@ -221,7 +223,7 @@ there.
 | `saltlick serve [-addr :8080] [-db saltlick.db] [-trusted-proxies <cidrs>]` | Run the directory; rate-limit flags above |
 | `saltlick keygen [-out xaa]` | Generate an Ed25519 keypair in the encoding the API expects |
 | `saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json` | Sign a package; print the publish headers on stderr |
-| `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs; add `-upload packages/xab` to withdraw only the package for `xab` |
+| `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs; add `-upload packages/xab -file <that package>` to withdraw only the package for `xab` |
 | `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`, `-upload packages/<counterparty>`, `-upload spiffe-bundle`) beside the entry; the file is sent unchanged |
 | `saltlick clear -db saltlick.db -id xaa -reason "key lost"` | Release a binding; logged |
 | `saltlick log -db saltlick.db` | Print the administrative log |
@@ -242,7 +244,7 @@ is an administrative act by an operator with the database file, and it is record
 | `PUT` | `/v1/parties/{sovereign_id}/package` | Host or replace it; signed by the entry's bound key |
 | `GET` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | The package the party signed for one counterparty, byte-for-byte, `application/json` |
 | `PUT` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | Host or replace it; signed by the entry's bound key; other counterparties' packages and `package` are untouched |
-| `DELETE` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | Withdraw that one package when the peering ends; signed by the bound key; everything else stays |
+| `DELETE` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | Withdraw that one package for good when the peering ends; signed by the bound key over the withdrawn package's sha256; everything else stays |
 | `GET` | `/v1/parties/{sovereign_id}/ca` | The hosted CA certificate(s), byte-for-byte, `application/pem-certificate-chain` |
 | `PUT` | `/v1/parties/{sovereign_id}/ca` | Host or replace them; signed by the entry's bound key |
 | `GET` | `/v1/parties/{sovereign_id}/spiffe-bundle` | The hosted SPIFFE trust bundle, byte-for-byte, `application/json` |

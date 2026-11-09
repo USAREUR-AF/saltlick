@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS hosted (
   signature    TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (sovereign_id, kind)
 );
+CREATE TABLE IF NOT EXISTS withdrawn (
+  signature    TEXT PRIMARY KEY,
+  sovereign_id TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  at           TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   at           TEXT NOT NULL,
@@ -218,6 +224,15 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
+	// A counterparty package removed with its entry is withdrawn as if by its own
+	// DELETE: its upload can never be replayed into the slot again.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO withdrawn (signature, sovereign_id, kind, at)
+		 SELECT signature, sovereign_id, kind, ? FROM hosted
+		 WHERE sovereign_id = ? AND kind LIKE 'packages/%' AND signature != ''`,
+		time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ?`, id); err != nil {
 		return err
 	}
@@ -275,20 +290,46 @@ func (s *Store) PutFile(ctx context.Context, id, kind string, f *HostedFile, now
 	return replaced, err
 }
 
-// DeleteFile removes one hosted file, or returns ErrNoFile when there is none.
-func (s *Store) DeleteFile(ctx context.Context, id, kind string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind)
+// WithdrawFile removes one hosted file and records the signature of the upload
+// that stored it as withdrawn, in one transaction, so that upload can never be
+// stored again (IsWithdrawn). It returns ErrNoFile when there is no such file.
+func (s *Store) WithdrawFile(ctx context.Context, id, kind string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	var sig string
+	err = tx.QueryRowContext(ctx, `SELECT signature FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&sig)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNoFile
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if sig != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO withdrawn (signature, sovereign_id, kind, at) VALUES (?, ?, ?, ?)`,
+			sig, id, kind, now.UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// IsWithdrawn reports whether signature is that of an upload whose file was
+// withdrawn. Ed25519 signatures are deterministic, so the same bytes uploaded
+// under the same key by the same request carry the same signature.
+func (s *Store) IsWithdrawn(ctx context.Context, signature string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM withdrawn WHERE signature = ?`, signature).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // GetFile returns a hosted file, or ErrNoFile.

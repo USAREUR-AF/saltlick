@@ -129,9 +129,22 @@ counterparty:
   that line equals the slot it asked for, exactly as for any hosted file.
 - Uploading one slot never changes another slot or `package`.
 - `DELETE /v1/parties/{sovereign_id}/packages/{counterparty}` withdraws that one slot when the
-  peering ends, leaving the entry, its key binding and every other file. It is signed by the
-  bound key over the statement `DELETE`, `<sovereign_id>/packages/<counterparty>`, the empty
-  body's hash and `-`, as an entry's `DELETE` is; 404 when the slot holds nothing.
+  peering ends, leaving the entry, its key binding and every other file; 404 when the slot holds
+  nothing. It is signed by the bound key over the statement `DELETE`,
+  `<sovereign_id>/packages/<counterparty>`, `sha256:` of **the package being withdrawn** (the
+  bytes the slot serves, not the empty request body) and `-`. `saltlick sign -method DELETE
+  -upload packages/<counterparty> -file <package>` builds it.
+- **What makes a withdrawal final.** Two rules, together:
+  1. The withdrawal statement names the bytes it withdraws, so a saved `DELETE` withdraws only
+     that package and is refused (403) against any later package in the slot.
+  2. The directory keeps the upload signature of every withdrawn counterparty package, and
+     refuses (409) a `PUT` presenting it. A saved `GET` of the slot (body, `X-Saltlick-Key`,
+     `X-Saltlick-Signature`) replayed as a `PUT` therefore cannot restore the package. Ed25519
+     signatures are deterministic, so the party itself cannot re-upload the same bytes either:
+     to offer that counterparty a package again, it signs and uploads a new one.
+  Deleting the entry withdraws its counterparty packages by the same rule 2, so re-claiming the
+  name does not let a saved slot upload return. The single `package` slot, the entry `DELETE`
+  and its statement are unchanged.
 - The directory does not interpret the slot name, does not check that `{counterparty}` has an
   entry, and does not list slots in `GET /v1/parties` or on the home page. Being listed still
   grants nothing, and the directory still computes nothing about who peers with whom; a slot is
@@ -211,7 +224,8 @@ GET    /v1/parties/{sovereign_id}/packages/{counterparty}
 PUT    /v1/parties/{sovereign_id}/packages/{counterparty}
                                             host or replace it; rules above
 DELETE /v1/parties/{sovereign_id}/packages/{counterparty}
-                                            withdraw that one package; signed by the bound key
+                                            withdraw that one package, for good; signed by the
+                                            bound key over the withdrawn package's sha256
 GET    /v1/parties/{sovereign_id}/ca        the hosted CA certificate(s), byte-for-byte
                                             (application/pem-certificate-chain)
 PUT    /v1/parties/{sovereign_id}/ca        host or replace them; rules above
@@ -227,7 +241,7 @@ GET    /v1/spec                             which entry formats this instance ac
 Every write carries `X-Saltlick-Key` (except DELETE) and `X-Saltlick-Signature`, an Ed25519
 signature over the request statement: five newline-terminated lines `saltlick-request/v1`, the
 method, the path below `/v1/parties/` (`<sovereign_id>`, `<sovereign_id>/package`,
-`<sovereign_id>/packages/<counterparty>`, `<sovereign_id>/ca` or `<sovereign_id>/spiffe-bundle`), `sha256:` + hex of the body, and the presented key or `-`. The path line
+`<sovereign_id>/packages/<counterparty>`, `<sovereign_id>/ca` or `<sovereign_id>/spiffe-bundle`), `sha256:` + hex of the body (for a counterparty package's `DELETE`, of the package withdrawn), and the presented key or `-`. The path line
 keeps a signature for one resource from being replayed against another.
 
 `GET` returns the submitted bytes **unaltered** — a consumer must be able to verify the

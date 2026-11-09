@@ -81,7 +81,7 @@ func usage() {
   saltlick keygen [-out <prefix>]
   saltlick sign   -key <file> -package <file> [-id <sovereign_id>]
   saltlick sign   -key <file> -upload package|packages/<counterparty>|ca|spiffe-bundle -file <file> -id <sovereign_id>
-  saltlick sign   -key <file> -method DELETE -id <sovereign_id> [-upload packages/<counterparty>]
+  saltlick sign   -key <file> -method DELETE -id <sovereign_id> [-upload packages/<counterparty> -file <file>]
 
 Advisory only. Being listed grants access to nothing, and nothing here
 establishes that a party is who it claims to be.
@@ -289,16 +289,25 @@ func sign(args []string) error {
 			return errors.New("a delete needs -id")
 		}
 		resource := id
+		var withdrawn []byte
 		if cp, ok := strings.CutPrefix(*upload, "packages/"); ok {
-			// Withdraw one counterparty's package: -method DELETE -upload packages/<counterparty>.
+			// Withdraw one counterparty's package: -method DELETE -upload packages/<counterparty>
+			// -file <the package being withdrawn>. The statement binds those bytes, so it
+			// cannot be replayed against a later package in the same slot.
 			if !pkgv1.ValidSovereignID(cp) || cp == id {
 				return errors.New("-upload packages/<counterparty> names another party's sovereign_id")
+			}
+			if *uploadFile == "" {
+				return errors.New("withdrawing a counterparty package needs -file: the package being withdrawn, as the directory serves it")
+			}
+			if withdrawn, err = os.ReadFile(*uploadFile); err != nil {
+				return err
 			}
 			resource = id + "/" + *upload
 		} else if *upload != "" {
 			return errors.New("a delete takes no -upload, or -upload packages/<counterparty> to withdraw one counterparty's package")
 		}
-		stmt := writeauth.Statement(http.MethodDelete, resource, nil, "")
+		stmt := writeauth.Statement(http.MethodDelete, resource, withdrawn, "")
 		fmt.Printf("%s: %s\n", httpapi.HeaderSignature, base64.StdEncoding.EncodeToString(ed25519.Sign(priv, stmt)))
 		return nil
 	}

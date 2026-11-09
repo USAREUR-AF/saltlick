@@ -40,6 +40,8 @@ import (
 //     through a file.
 //  4. A package's own signature must verify under the bound key, so the package
 //     served here and the key advertised for it go together.
+//  5. A counterparty package's upload must not be one that was withdrawn: the
+//     signature of every withdrawn counterparty upload is kept and refused.
 //
 // A hosted package is not compared with the entry's package_sha256. The pointer
 // and the package are written in two requests, and the reader recomputes the
@@ -159,11 +161,15 @@ func (s *Server) getHosted(kindFor kindOf) http.HandlerFunc {
 	}
 }
 
-// deleteCounterpartyPackage removes one counterparty's package, so a party can
+// deleteCounterpartyPackage withdraws one counterparty's package, so a party can
 // withdraw a peering's offer when the peering ends without deleting its entry,
 // its other packages, its CA or its key binding. The request is signed by the
-// bound key over DELETE <sovereign_id>/packages/<counterparty> with no key line,
-// as an entry's DELETE is.
+// bound key over DELETE <sovereign_id>/packages/<counterparty>, the sha256 of
+// the package being withdrawn (not of the empty request body), and no key line.
+// Binding the withdrawn bytes keeps the statement from being replayed against a
+// later package in the same slot. The withdrawn upload's signature is kept, and
+// putHosted refuses it, so a saved GET (body, key and signature) cannot be
+// replayed as a PUT to restore the package: a withdrawal is final.
 func (s *Server) deleteCounterpartyPackage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("sovereign_id")
 	kind, err := packageForCounterparty(r)
@@ -189,7 +195,16 @@ func (s *Server) deleteCounterpartyPackage(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusInternalServerError, "reading entry: %v", err)
 		return
 	}
-	statement := writeauth.Statement(http.MethodDelete, id+"/"+kind, nil, "")
+	f, err := s.store.GetFile(r.Context(), id, kind)
+	if errors.Is(err, store.ErrNoFile) {
+		s.writeError(w, http.StatusNotFound, "%q hosts no %s here", id, kind)
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "reading %s: %v", kind, err)
+		return
+	}
+	statement := writeauth.Statement(http.MethodDelete, id+"/"+kind, f.Body, "")
 	if err := writeauth.AuthoriseDelete(e.BoundKey, statement, requestSig); err != nil {
 		var refusal *writeauth.Refusal
 		if errors.As(err, &refusal) {
@@ -199,7 +214,7 @@ func (s *Server) deleteCounterpartyPackage(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusBadRequest, "%v", err)
 		return
 	}
-	if err := s.store.DeleteFile(r.Context(), id, kind); errors.Is(err, store.ErrNoFile) {
+	if err := s.store.WithdrawFile(r.Context(), id, kind, s.now()); errors.Is(err, store.ErrNoFile) {
 		s.writeError(w, http.StatusNotFound, "%q hosts no %s here", id, kind)
 		return
 	} else if err != nil {
@@ -305,6 +320,21 @@ func (s *Server) putHosted(kindFor kindOf) http.HandlerFunc {
 		if pkg != nil {
 			if err := pkg.VerifySignature(presentedKey); err != nil {
 				s.writeError(w, http.StatusForbidden, "package signature: %v", err)
+				return
+			}
+		}
+
+		// 5. A counterparty package that was withdrawn stays withdrawn: the upload
+		// that stored it, replayed, is refused.
+		if strings.HasPrefix(kind, "packages/") {
+			gone, err := s.store.IsWithdrawn(r.Context(), base64.StdEncoding.EncodeToString(requestSig))
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "reading withdrawals: %v", err)
+				return
+			}
+			if gone {
+				s.writeError(w, http.StatusConflict,
+					"this upload was withdrawn from %s/%s and is never stored again; sign and upload a new package", id, kind)
 				return
 			}
 		}

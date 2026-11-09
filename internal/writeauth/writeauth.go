@@ -46,7 +46,8 @@ const StatementVersion = "saltlick-request/v1"
 //	<METHOD>
 //	<the path below /v1/parties/: <sovereign_id>, <sovereign_id>/package,
 //	 <sovereign_id>/packages/<counterparty>, <sovereign_id>/ca or <sovereign_id>/spiffe-bundle>
-//	sha256:<hex of the request body, empty string hashed where there is none>
+//	sha256:<hex of the request body, empty string hashed where there is none;
+//	 for DELETE <sovereign_id>/packages/<counterparty>, of the package withdrawn>
 //	<presented verifying key, base64, or "-" where there is none>
 func Statement(method, sovereignID string, body []byte, presentedKey string) []byte {
 	sum := sha256.Sum256(body)
