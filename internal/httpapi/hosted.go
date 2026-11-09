@@ -40,8 +40,10 @@ import (
 //     through a file.
 //  4. A package's own signature must verify under the bound key, so the package
 //     served here and the key advertised for it go together.
-//  5. A counterparty package's upload must not be one that was withdrawn: the
-//     signature of every withdrawn counterparty upload is kept and refused.
+//  5. A counterparty package's upload must not be one that was withdrawn or
+//     superseded: the signature of every counterparty upload that a DELETE
+//     removed, or that a later upload with another signature replaced, is kept
+//     and refused.
 //
 // A hosted package is not compared with the entry's package_sha256. The pointer
 // and the package are written in two requests, and the reader recomputes the
@@ -334,7 +336,7 @@ func (s *Server) putHosted(kindFor kindOf) http.HandlerFunc {
 			}
 			if gone {
 				s.writeError(w, http.StatusConflict,
-					"this upload was withdrawn from %s/%s and is never stored again; sign and upload a new package", id, kind)
+					"this upload was withdrawn or superseded in %s/%s and is never stored again; sign and upload a new package", id, kind)
 				return
 			}
 		}

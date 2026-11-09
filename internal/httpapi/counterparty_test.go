@@ -366,3 +366,44 @@ func TestDeletingTheEntryWithdrawsItsCounterpartyPackagesForGood(t *testing.T) {
 	mustStatus(t, resp, http.StatusConflict)
 	resp.Body.Close()
 }
+
+// A superseded upload is withdrawn too: a saved GET of an earlier package cannot
+// roll the slot back over a newer one, nor return after the newer one is withdrawn.
+// Re-uploading the current package is still accepted.
+func TestASupersededCounterpartyPackageCannotBeReplayed(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "slot-supersede")
+	withEntry(t, h, k, "xaa")
+	p1 := peeringPackage(t, k, "xaa", "192.0.2.10:51821", "169.254.10.0/31")
+	p2 := peeringPackage(t, k, "xaa", "192.0.2.10:51831", "169.254.10.0/31")
+	resp := h.host("xaa", "packages/xab", k, p1)
+	mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+	saved := h.get("/v1/parties/xaa/packages/xab")
+	mustStatus(t, saved, http.StatusOK)
+	savedBody := body(t, saved)
+	savedKey, savedSig := saved.Header.Get(httpapi.HeaderWriterKey), saved.Header.Get(httpapi.HeaderWriterSignature)
+
+	resp = h.host("xaa", "packages/xab", k, p2)
+	mustStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	// Re-running the publish of the current package is not a supersede.
+	resp = h.host("xaa", "packages/xab", k, p2)
+	mustStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = h.putSaved("/v1/parties/xaa/packages/xab", savedBody, savedKey, savedSig)
+	mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	if b := body(t, h.get("/v1/parties/xaa/packages/xab")); !bytes.Equal(b, p2) {
+		t.Fatal("a replayed earlier upload rolled the slot back")
+	}
+
+	resp = h.deleteSlot("xaa", "xab", "xaa/packages/xab", p2, k.Priv)
+	mustStatus(t, resp, http.StatusNoContent)
+	resp.Body.Close()
+	resp = h.putSaved("/v1/parties/xaa/packages/xab", savedBody, savedKey, savedSig)
+	mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	mustStatus(t, h.get("/v1/parties/xaa/packages/xab"), http.StatusNotFound)
+}

@@ -137,11 +137,15 @@ counterparty:
 - **What makes a withdrawal final.** Two rules, together:
   1. The withdrawal statement names the bytes it withdraws, so a saved `DELETE` withdraws only
      that package and is refused (403) against any later package in the slot.
-  2. The directory keeps the upload signature of every withdrawn counterparty package, and
-     refuses (409) a `PUT` presenting it. A saved `GET` of the slot (body, `X-Saltlick-Key`,
-     `X-Saltlick-Signature`) replayed as a `PUT` therefore cannot restore the package. Ed25519
-     signatures are deterministic, so the party itself cannot re-upload the same bytes either:
-     to offer that counterparty a package again, it signs and uploads a new one.
+  2. The directory keeps the upload signature of every counterparty package that left the
+     slot, and refuses (409) a `PUT` presenting it. A package leaves the slot when a `DELETE`
+     withdraws it or when it is **superseded**: a later upload with a different signature
+     replaces it. A saved `GET` of the slot (body, `X-Saltlick-Key`, `X-Saltlick-Signature`)
+     replayed as a `PUT` therefore cannot restore a withdrawn package, nor roll the slot back
+     over a newer one to a stale endpoint or key. Re-uploading the package the slot holds now
+     (the same signature) supersedes nothing and is accepted. Ed25519 signatures are
+     deterministic, so the party itself cannot re-upload bytes that left the slot either: to
+     offer that counterparty a package again, it signs and uploads a new one.
   Deleting the entry withdraws its counterparty packages by the same rule 2, so re-claiming the
   name does not let a saved slot upload return. The single `package` slot, the entry `DELETE`
   and its statement are unchanged.

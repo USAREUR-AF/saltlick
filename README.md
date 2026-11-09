@@ -158,7 +158,8 @@ The counterparty `xab` fetches `GET /v1/parties/xaa/packages/xab`. Each slot is 
 as `package` is, is served byte for byte with its upload signature, and is deleted with the
 entry, or withdrawn alone with a signed `DELETE` of its path when the peering ends. A
 withdrawal is final: the `DELETE` statement names the bytes withdrawn, and the directory refuses
-the withdrawn upload if it is ever replayed, so returning needs a newly signed package. The
+any upload that has left the slot (withdrawn, or superseded by a later upload with another
+signature) if it is ever replayed, so returning needs a newly signed package. The
 counterparty name has the form of a `sovereign_id` and is not the party itself (400
 otherwise). The upload signature's resource line is `xaa/packages/xab`, so a reader checks under
 the key read aloud that `xaa` signed this package for `xab`, not for someone else.
