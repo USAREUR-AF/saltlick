@@ -16,10 +16,15 @@
 //
 //  1. Anything that RANKS, MATCHES, SCORES or RECOMMENDS parties. No
 //     /compatible, no /suggested-peers, no "these two could federate" filter,
-//     no sort by capability. The directory never knows who peers with whom, and
-//     must not learn: a query that returns "parties compatible with xaa" makes
+//     no sort by capability. The directory never works out who peers with whom,
+//     and must not: a query that returns "parties compatible with xaa" makes
 //     the operator of this box a broker, and the answer it gives becomes an
-//     input to somebody's decision. Two parties decide to federate by talking to
+//     input to somebody's decision. A party's per-counterparty package slot
+//     (/v1/parties/<id>/packages/<counterparty>) does not change this: the slot
+//     name is the party's own statement, served back as written; the directory
+//     does not interpret it, list it, or derive anything from it. It is readable
+//     by anyone who asks for that path, which SPEC.md says plainly so a party
+//     can choose another channel. Two parties decide to federate by talking to
 //     each other. They then compose independently, with the same versioned tool,
 //     and compare one digest -- a mechanism that needs no server at all and
 //     works with an entirely offline partner.
@@ -105,12 +110,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/parties/{sovereign_id}", s.get)
 	mux.HandleFunc("PUT /v1/parties/{sovereign_id}", s.put)
 	mux.HandleFunc("DELETE /v1/parties/{sovereign_id}", s.delete)
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/package", s.getHosted(store.KindPackage))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/package", s.putHosted(store.KindPackage))
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/ca", s.getHosted(store.KindCA))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/ca", s.putHosted(store.KindCA))
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/spiffe-bundle", s.getHosted(store.KindSPIFFEBundle))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/spiffe-bundle", s.putHosted(store.KindSPIFFEBundle))
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/package", s.getHosted(fixedKind(store.KindPackage)))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/package", s.putHosted(fixedKind(store.KindPackage)))
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/packages/{counterparty}", s.getHosted(packageForCounterparty))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/packages/{counterparty}", s.putHosted(packageForCounterparty))
+	mux.HandleFunc("DELETE /v1/parties/{sovereign_id}/packages/{counterparty}", s.deleteCounterpartyPackage)
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/ca", s.getHosted(fixedKind(store.KindCA)))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/ca", s.putHosted(fixedKind(store.KindCA)))
+	mux.HandleFunc("GET /v1/parties/{sovereign_id}/spiffe-bundle", s.getHosted(fixedKind(store.KindSPIFFEBundle)))
+	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/spiffe-bundle", s.putHosted(fixedKind(store.KindSPIFFEBundle)))
 	return mux
 }
 

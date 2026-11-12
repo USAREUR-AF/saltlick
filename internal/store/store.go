@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +63,12 @@ CREATE TABLE IF NOT EXISTS hosted (
   writer_key   TEXT NOT NULL DEFAULT '',
   signature    TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (sovereign_id, kind)
+);
+CREATE TABLE IF NOT EXISTS withdrawn (
+  signature    TEXT PRIMARY KEY,
+  sovereign_id TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  at           TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admin_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,6 +225,15 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
+	// A counterparty package removed with its entry is withdrawn as if by its own
+	// DELETE: its upload can never be replayed into the slot again.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO withdrawn (signature, sovereign_id, kind, at)
+		 SELECT signature, sovereign_id, kind, ? FROM hosted
+		 WHERE sovereign_id = ? AND kind LIKE 'packages/%' AND signature != ''`,
+		time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ?`, id); err != nil {
 		return err
 	}
@@ -230,6 +246,13 @@ const (
 	KindCA           = "ca"            // the party's CA certificate(s), PEM
 	KindSPIFFEBundle = "spiffe-bundle" // the party's SPIFFE trust bundle, JSON
 )
+
+// KindPackageFor is the kind under which a party hosts the package it signed
+// for one counterparty: "packages/<counterparty>". A party holding several
+// peerings keeps one package per counterparty, each with its own transport
+// offer, so publishing one never replaces another. The single "package" kind
+// is unchanged and independent of these.
+func KindPackageFor(counterparty string) string { return "packages/" + counterparty }
 
 // ErrNoFile is returned when a party hosts no file of the kind asked for.
 var ErrNoFile = errors.New("no file of that kind for that sovereign_id")
@@ -248,10 +271,20 @@ type HostedFile struct {
 
 // PutFile stores a hosted file exactly as received, with the key and request
 // signature that wrote it, replacing any earlier one of the same kind. The
-// caller has decided the write is permitted.
+// caller has decided the write is permitted. When a counterparty package
+// (kind packages/<counterparty>) replaces an earlier upload with a different
+// signature, the earlier upload is superseded: its signature is recorded as
+// withdrawn in the same transaction, so it cannot be replayed to roll the slot
+// back to a stale endpoint or key. Re-uploading the current bytes (the same
+// signature) supersedes nothing.
 func (s *Store) PutFile(ctx context.Context, id, kind string, f *HostedFile, now time.Time) (replaced bool, err error) {
-	var one int
-	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&one)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	var prior string
+	err = tx.QueryRowContext(ctx, `SELECT signature FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&prior)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
@@ -259,13 +292,65 @@ func (s *Store) PutFile(ctx context.Context, id, kind string, f *HostedFile, now
 	default:
 		replaced = true
 	}
-	_, err = s.db.ExecContext(ctx,
+	at := now.UTC().Format(time.RFC3339)
+	if replaced && strings.HasPrefix(kind, "packages/") && prior != "" && prior != f.Signature {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO withdrawn (signature, sovereign_id, kind, at) VALUES (?, ?, ?, ?)`,
+			prior, id, kind, at); err != nil {
+			return false, err
+		}
+	}
+	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO hosted (sovereign_id, kind, body, updated, writer_key, signature) VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(sovereign_id, kind) DO UPDATE SET
 		   body = excluded.body, updated = excluded.updated,
 		   writer_key = excluded.writer_key, signature = excluded.signature`,
-		id, kind, f.Body, now.UTC().Format(time.RFC3339), f.WriterKey, f.Signature)
-	return replaced, err
+		id, kind, f.Body, at, f.WriterKey, f.Signature); err != nil {
+		return false, err
+	}
+	return replaced, tx.Commit()
+}
+
+// WithdrawFile removes one hosted file and records the signature of the upload
+// that stored it as withdrawn, in one transaction, so that upload can never be
+// stored again (IsWithdrawn). It returns ErrNoFile when there is no such file.
+func (s *Store) WithdrawFile(ctx context.Context, id, kind string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	var sig string
+	err = tx.QueryRowContext(ctx, `SELECT signature FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind).Scan(&sig)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNoFile
+	}
+	if err != nil {
+		return err
+	}
+	if sig != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO withdrawn (signature, sovereign_id, kind, at) VALUES (?, ?, ?, ?)`,
+			sig, id, kind, now.UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM hosted WHERE sovereign_id = ? AND kind = ?`, id, kind); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// IsWithdrawn reports whether signature is that of an upload whose file was
+// withdrawn. Ed25519 signatures are deterministic, so the same bytes uploaded
+// under the same key by the same request carry the same signature.
+func (s *Store) IsWithdrawn(ctx context.Context, signature string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM withdrawn WHERE signature = ?`, signature).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // GetFile returns a hosted file, or ErrNoFile.

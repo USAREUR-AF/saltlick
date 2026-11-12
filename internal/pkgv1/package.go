@@ -64,6 +64,11 @@ var (
 	base64StdCharsRe = regexp.MustCompile(`^[A-Za-z0-9+/]*$`)
 )
 
+// ValidSovereignID reports whether s has the form of a sovereign_id: 2 to 16
+// characters of lowercase a-z, 0-9 and hyphen. A counterparty slot name has
+// the same form.
+func ValidSovereignID(s string) bool { return sovereignIDRe.MatchString(s) }
+
 // Package is one directory entry: the bytes exactly as submitted, plus the
 // parsed tree used to check them.
 //

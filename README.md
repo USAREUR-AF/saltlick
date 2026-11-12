@@ -146,6 +146,30 @@ Each file is served with the signature of the upload that stored it, so a reader
 the three, the SPIFFE bundle included, against the key the two parties read aloud.
 [Checking a hosted file's signature](#checking-a-hosted-files-signature) shows how.
 
+### Several peerings: one package per counterparty
+
+A package carries one transport offer: one endpoint, one WireGuard key, one link subnet. A party
+that peers with two counterparties signs two packages, and one `package` slot would let the
+second replace the first. So a party also keeps one package per counterparty:
+
+5. `PUT /v1/parties/xaa/packages/xab` — the package `xaa` signed for its peering with `xab`.
+
+The counterparty `xab` fetches `GET /v1/parties/xaa/packages/xab`. Each slot is checked exactly
+as `package` is, is served byte for byte with its upload signature, and is deleted with the
+entry, or withdrawn alone with a signed `DELETE` of its path when the peering ends. A
+withdrawal is final: the `DELETE` statement names the bytes withdrawn, and the directory refuses
+any upload that has left the slot (withdrawn, or superseded by a later upload with another
+signature) if it is ever replayed, so returning needs a newly signed package. The
+counterparty name has the form of a `sovereign_id` and is not the party itself (400
+otherwise). The upload signature's resource line is `xaa/packages/xab`, so a reader checks under
+the key read aloud that `xaa` signed this package for `xab`, not for someone else.
+
+The package format does not change, and the single `package` slot and the pointer keep working
+as before; a party with one peering needs neither. The directory does not interpret the slot
+name, does not check that the counterparty exists, and does not list slots in the catalogue or
+on the home page. A slot name is still readable by anyone who asks for it: a party that does not
+want a peering visible exchanges that package out of band or serves it from its own host.
+
 ## What a recognition-only package may and may not carry
 
 | Present | Refused |
@@ -200,8 +224,8 @@ there.
 | `saltlick serve [-addr :8080] [-db saltlick.db] [-trusted-proxies <cidrs>]` | Run the directory; rate-limit flags above |
 | `saltlick keygen [-out xaa]` | Generate an Ed25519 keypair in the encoding the API expects |
 | `saltlick sign -key xaa.key -package xaa.json -out xaa.signed.json` | Sign a package; print the publish headers on stderr |
-| `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs |
-| `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`, `-upload spiffe-bundle`) beside the entry; the file is sent unchanged |
+| `saltlick sign -key xaa.key -method DELETE -id xaa` | Print the header a delete needs; add `-upload packages/xab -file <that package>` to withdraw only the package for `xab` |
+| `saltlick sign -key xaa.key -upload ca -file xaa-ca.pem -id xaa` | Print the headers to host a CA (or `-upload package`, `-upload packages/<counterparty>`, `-upload spiffe-bundle`) beside the entry; the file is sent unchanged |
 | `saltlick clear -db saltlick.db -id xaa -reason "key lost"` | Release a binding; logged |
 | `saltlick log -db saltlick.db` | Print the administrative log |
 
@@ -219,6 +243,9 @@ is an administrative act by an operator with the database file, and it is record
 | `DELETE` | `/v1/parties/{sovereign_id}` | Signed by the bound key; deletes the hosted files too |
 | `GET` | `/v1/parties/{sovereign_id}/package` | The hosted package, byte-for-byte, `application/json` |
 | `PUT` | `/v1/parties/{sovereign_id}/package` | Host or replace it; signed by the entry's bound key |
+| `GET` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | The package the party signed for one counterparty, byte-for-byte, `application/json` |
+| `PUT` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | Host or replace it; signed by the entry's bound key; other counterparties' packages and `package` are untouched |
+| `DELETE` | `/v1/parties/{sovereign_id}/packages/{counterparty}` | Withdraw that one package for good when the peering ends; signed by the bound key over the withdrawn package's sha256; everything else stays |
 | `GET` | `/v1/parties/{sovereign_id}/ca` | The hosted CA certificate(s), byte-for-byte, `application/pem-certificate-chain` |
 | `PUT` | `/v1/parties/{sovereign_id}/ca` | Host or replace them; signed by the entry's bound key |
 | `GET` | `/v1/parties/{sovereign_id}/spiffe-bundle` | The hosted SPIFFE trust bundle, byte-for-byte, `application/json` |
@@ -243,8 +270,8 @@ sha256:<hex of the request body; the empty string hashed where there is no body>
 <the X-Saltlick-Key value, or "-" where there is none>
 ```
 
-The third line is the path below `/v1/parties/`: `xaa` for the entry, `xaa/package`, `xaa/ca`
-or `xaa/spiffe-bundle` for a hosted file. It binds the method, the resource, the body and the key presented, so none of
+The third line is the path below `/v1/parties/`: `xaa` for the entry, `xaa/package`,
+`xaa/packages/xab`, `xaa/ca` or `xaa/spiffe-bundle` for a hosted file. It binds the method, the resource, the body and the key presented, so none of
 the four can be swapped for another. `saltlick sign` builds and signs it for you.
 
 ### GET returns the submitted bytes unaltered
