@@ -78,7 +78,7 @@ and its pointer's `package_url` names this instance's own `/v1/parties/{sovereig
 
 | File | Body | Checked on upload |
 |---|---|---|
-| `package` | the party's complete signed federation package, offers included | `spec` is `federation-package/v1`; `sovereign_id` equals the path's; the body is in RFC 8785 canonical form; its signature verifies under the entry's bound key |
+| `package` | the party's complete signed federation package, offers included | `spec` is `federation-package/v1` or `federation-package/v2` (goat's package v2: v1 with an optional `identity.ca_fingerprint_next`; the directory reads neither's identity); `sovereign_id` equals the path's; the body is in RFC 8785 canonical form; its signature verifies under the entry's bound key |
 | `ca` | one or more PEM `CERTIFICATE` blocks, nothing else but whitespace | each block parses as an X.509 certificate with the CA flag set |
 | `spiffe-bundle` | the party's SPIFFE trust bundle: the JWKS document `spire-server bundle show -format spiffe` prints | strict JSON (no duplicate member names, integers only); a JSON object with a non-empty `keys` array; every key an object whose `use` is `x509-svid` or `jwt-svid`; every `x509-svid` key's `x5c` a non-empty array whose first element is the standard base64 of a DER X.509 certificate; `spiffe_sequence` and `spiffe_refresh_hint`, when present, non-negative integers |
 

@@ -35,6 +35,13 @@ const SpecVersion = "federation-package/v1"
 // fetched, and the digest of it. See pointer.go.
 const PointerSpec = "saltlick-pointer/v1"
 
+// HostedSpecs are the package versions a party may host here (hosted.go): v1,
+// and goat's v2 (goatcore ADR 1242), which is v1 with spec changed and an
+// optional identity.ca_fingerprint_next. A hosted package is served, never
+// read into the listing, so the directory needs nothing of v2 but its name.
+// An entry itself stays v1 or a pointer (Accepted).
+var HostedSpecs = []string{SpecVersion, "federation-package/v2"}
+
 // Accepted lists every spec value an entry may declare.
 var Accepted = []string{PointerSpec, SpecVersion}
 
@@ -77,7 +84,7 @@ func ValidSovereignID(s string) bool { return sovereignIDRe.MatchString(s) }
 type Package struct {
 	Raw         []byte
 	Doc         *canonical.Value
-	Spec        string // SpecVersion or PointerSpec
+	Spec        string // SpecVersion or PointerSpec; a hosted package (hosted.go) may also be another of HostedSpecs
 	SovereignID string
 	Issued      string // empty for a pointer, which carries no issued date
 	Expires     string

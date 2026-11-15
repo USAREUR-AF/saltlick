@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/usareur-af/saltlick/internal/canonical"
 )
@@ -22,8 +24,8 @@ import (
 
 // ParseHostedPackage reads the body of a package upload: the party's complete
 // signed federation package, offers included. It refuses anything that is not
-// a federation-package/v1 document in RFC 8785 canonical form with a
-// well-formed signature. The canonical-form rule is what makes the bytes served
+// a federation-package/v1 or /v2 document (HostedSpecs) in RFC 8785
+// canonical form with a well-formed signature. The canonical-form rule is what makes the bytes served
 // the bytes a pointer's package_sha256 names.
 //
 // It does not verify the signature; call VerifySignature with the entry's
@@ -43,8 +45,8 @@ func ParseHostedPackage(raw []byte) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	if spec != SpecVersion {
-		return nil, fmt.Errorf("spec is %q; a hosted package is %q", spec, SpecVersion)
+	if !slices.Contains(HostedSpecs, spec) {
+		return nil, fmt.Errorf("spec is %q; a hosted package is %s", spec, strings.Join(quoted(HostedSpecs), " or "))
 	}
 	sovID, err := str(doc, "sovereign_id")
 	if err != nil {
@@ -68,7 +70,7 @@ func ParseHostedPackage(raw []byte) (*Package, error) {
 		return nil, fmt.Errorf("the package is not in RFC 8785 canonical form; upload the canonical bytes, " +
 			"which are the bytes a pointer's package_sha256 is computed over")
 	}
-	return &Package{Raw: raw, Doc: doc, Spec: SpecVersion, SovereignID: sovID}, nil
+	return &Package{Raw: raw, Doc: doc, Spec: spec, SovereignID: sovID}, nil
 }
 
 // ParseCA reads the body of a CA upload: one or more PEM CERTIFICATE blocks,
