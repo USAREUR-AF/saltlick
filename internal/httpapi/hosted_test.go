@@ -361,3 +361,50 @@ func TestHostedPackageOfAnotherVersionIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A v2 package is checked to the same standard as a v1 package, through the
+// same checks: canonical form, the package's own signature under the entry's
+// bound key, the sovereign_id of the path. Hosting byte for byte never means a
+// v2 package goes unchecked; each refusal answers v1 and v2 alike.
+func TestHostedPackageV2IsCheckedAsV1Is(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "hosted-v2-checks")
+	other := testsupport.NewKey(t, "hosted-v2-other-signer")
+	withEntry(t, h, k, "xaa")
+	withEntry(t, h, k, "xab")
+	for name, build := range map[string]func(testsupport.Key, string) []byte{
+		"v1": func(sk testsupport.Key, id string) []byte { return fullPackage(t, sk, id) },
+		"v2": func(sk testsupport.Key, id string) []byte { return packageV2(t, sk, id) },
+	} {
+		// The package signed by another key than the entry's: the upload itself is
+		// signed by the bound key, so only the package's own signature is wrong.
+		forged := build(other, "xaa")
+		for _, kind := range []string{"package", "packages/xab"} {
+			resp := h.host("xaa", kind, k, forged)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("%s in %s, signed by another key: status %d, want 403; %s", name, kind, resp.StatusCode, body(t, resp))
+				continue
+			}
+			if msg := string(body(t, resp)); !strings.Contains(msg, "package signature") {
+				t.Errorf("%s in %s: the refusal does not name the package signature: %s", name, kind, msg)
+			}
+			if got := h.get("/v1/parties/xaa/" + kind); got.StatusCode != http.StatusNotFound {
+				t.Errorf("%s in %s: a refused package is served (status %d)", name, kind, got.StatusCode)
+			} else {
+				got.Body.Close()
+			}
+		}
+		// Not in canonical form: refused before anything else, as v1 is.
+		resp := h.host("xaa", "package", k, append([]byte(" "), build(k, "xaa")...))
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s not canonical: status %d, want 422", name, resp.StatusCode)
+		}
+		resp.Body.Close()
+		// Another party's package in this party's slot.
+		resp = h.host("xaa", "package", k, build(k, "xab"))
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s naming another party: status %d, want 422", name, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
