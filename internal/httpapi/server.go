@@ -103,23 +103,67 @@ func New(st *store.Store, log *slog.Logger, now func() time.Time) *Server {
 // out of scope.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.home)
-	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /v1/spec", s.spec)
-	mux.HandleFunc("GET /v1/parties", s.list)
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}", s.get)
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}", s.put)
-	mux.HandleFunc("DELETE /v1/parties/{sovereign_id}", s.delete)
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/package", s.getHosted(fixedKind(store.KindPackage)))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/package", s.putHosted(fixedKind(store.KindPackage)))
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/packages/{counterparty}", s.getHosted(packageForCounterparty))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/packages/{counterparty}", s.putHosted(packageForCounterparty))
-	mux.HandleFunc("DELETE /v1/parties/{sovereign_id}/packages/{counterparty}", s.deleteCounterpartyPackage)
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/ca", s.getHosted(fixedKind(store.KindCA)))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/ca", s.putHosted(fixedKind(store.KindCA)))
-	mux.HandleFunc("GET /v1/parties/{sovereign_id}/spiffe-bundle", s.getHosted(fixedKind(store.KindSPIFFEBundle)))
-	mux.HandleFunc("PUT /v1/parties/{sovereign_id}/spiffe-bundle", s.putHosted(fixedKind(store.KindSPIFFEBundle)))
+	for _, rt := range s.routes() {
+		mux.HandleFunc(rt.pattern, rt.handler)
+	}
 	return mux
+}
+
+type route struct {
+	pattern string
+	handler http.HandlerFunc
+}
+
+// routes is the one table of what this instance serves. Handler registers it
+// and /v1/version reports it, so a client can tell "this directory has no such
+// route" from "this party hosts no such file" without guessing from a 404.
+func (s *Server) routes() []route {
+	return []route{
+		{"GET /{$}", s.home},
+		{"GET /healthz", s.healthz},
+		{"GET /v1/spec", s.spec},
+		{"GET /v1/version", s.version},
+		{"GET /v1/parties", s.list},
+		{"GET /v1/parties/{sovereign_id}", s.get},
+		{"PUT /v1/parties/{sovereign_id}", s.put},
+		{"DELETE /v1/parties/{sovereign_id}", s.delete},
+		{"GET /v1/parties/{sovereign_id}/package", s.getHosted(fixedKind(store.KindPackage))},
+		{"PUT /v1/parties/{sovereign_id}/package", s.putHosted(fixedKind(store.KindPackage))},
+		{"GET /v1/parties/{sovereign_id}/packages/{counterparty}", s.getHosted(packageForCounterparty)},
+		{"PUT /v1/parties/{sovereign_id}/packages/{counterparty}", s.putHosted(packageForCounterparty)},
+		{"DELETE /v1/parties/{sovereign_id}/packages/{counterparty}", s.deleteCounterpartyPackage},
+		{"GET /v1/parties/{sovereign_id}/ca", s.getHosted(fixedKind(store.KindCA))},
+		{"PUT /v1/parties/{sovereign_id}/ca", s.putHosted(fixedKind(store.KindCA))},
+		{"GET /v1/parties/{sovereign_id}/spiffe-bundle", s.getHosted(fixedKind(store.KindSPIFFEBundle))},
+		{"PUT /v1/parties/{sovereign_id}/spiffe-bundle", s.putHosted(fixedKind(store.KindSPIFFEBundle))},
+	}
+}
+
+// Release and Revision name the build. The release workflow sets them with
+// -ldflags -X; a local build reports "dev" and an empty revision.
+var (
+	Release  = "dev"
+	Revision = ""
+)
+
+// version reports the build and the routes it serves. It says what this
+// instance can do; it says nothing about any party.
+func (s *Server) version(w http.ResponseWriter, r *http.Request) {
+	rts := s.routes()
+	patterns := make([]string, 0, len(rts))
+	for _, rt := range rts {
+		if rt.pattern == "GET /{$}" {
+			patterns = append(patterns, "GET /")
+			continue
+		}
+		patterns = append(patterns, rt.pattern)
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"release":  Release,
+		"revision": Revision,
+		"spec":     pkgv1.SpecVersion,
+		"routes":   patterns,
+	})
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

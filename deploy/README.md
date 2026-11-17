@@ -43,6 +43,7 @@ Caddy obtains the certificate on first start. Then check it from anywhere:
 ```sh
 curl https://directory.example/healthz
 curl https://directory.example/v1/spec
+curl https://directory.example/v1/version   # the release running and the routes it serves
 curl https://directory.example/v1/parties
 ```
 

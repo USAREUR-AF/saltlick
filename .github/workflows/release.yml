@@ -37,6 +37,12 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
+      # The commit actually checked out: on a dispatch, github.sha is the
+      # dispatching ref, not the tag being built.
+      - name: the commit being built
+        id: rev
+        run: echo "rev=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: derive the lowercase image name
         id: name
         run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/saltlick" >> "$GITHUB_OUTPUT"
@@ -66,6 +72,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
+          build-args: |
+            RELEASE=${{ github.event.inputs.tag || github.ref_name }}
+            REVISION=${{ steps.rev.outputs.rev }}
 
       # Print the pin a deployer needs. A tag says which release; the index
       # digest says which bytes, and the digest is what a deploy should pin.

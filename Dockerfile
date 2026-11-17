@@ -10,8 +10,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# The release workflow passes the tag and commit; /v1/version reports them.
+ARG RELEASE=dev
+ARG REVISION=
 RUN CGO_ENABLED=0 GOFLAGS=-trimpath go build \
-      -ldflags="-s -w" \
+      -ldflags="-s -w -X github.com/usareur-af/saltlick/internal/httpapi.Release=${RELEASE} -X github.com/usareur-af/saltlick/internal/httpapi.Revision=${REVISION}" \
       -o /out/saltlick ./cmd/saltlick
 
 # The data directory is created here so the runtime image, which has no shell,
