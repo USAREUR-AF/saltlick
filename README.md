@@ -251,6 +251,7 @@ is an administrative act by an operator with the database file, and it is record
 | `GET` | `/v1/parties/{sovereign_id}/spiffe-bundle` | The hosted SPIFFE trust bundle, byte-for-byte, `application/json` |
 | `PUT` | `/v1/parties/{sovereign_id}/spiffe-bundle` | Host or replace it; signed by the entry's bound key |
 | `GET` | `/v1/spec` | `spec`: the package format; `accepts`: every entry format, `saltlick-pointer/v1` and `federation-package/v1` |
+| `GET` | `/v1/version` | `release`, `revision`, and `routes`: every route this instance serves. A path missing from `routes` answers the router's plain-text 404 because this release lacks it; a listed route answers a JSON 404 with `error` when the party or file is not there |
 | `GET` | `/healthz` | Liveness |
 
 Anyone may read. Writes need two headers:

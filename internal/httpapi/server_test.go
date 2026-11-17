@@ -578,7 +578,7 @@ func TestEveryResponseCarriesTheAdvisory(t *testing.T) {
 	k := testsupport.NewKey(t, "advisory")
 	h.publish("xaa", k, testsupport.SignedEntry(t, k, "xaa", "2026-09-05", "2026-12-05")).Body.Close()
 
-	for _, path := range []string{"/healthz", "/v1/spec", "/v1/parties", "/v1/parties/xaa", "/v1/parties/nope"} {
+	for _, path := range []string{"/healthz", "/v1/spec", "/v1/version", "/v1/parties", "/v1/parties/xaa", "/v1/parties/nope"} {
 		resp := h.get(path)
 		if got := resp.Header.Get(httpapi.HeaderAdvisory); !strings.Contains(got, "grants access to nothing") {
 			t.Errorf("GET %s: %s = %q", path, httpapi.HeaderAdvisory, got)
@@ -776,4 +776,48 @@ func TestSpecReportsBothFormats(t *testing.T) {
 	if len(accepts) != 2 || accepts[0] != "saltlick-pointer/v1" || accepts[1] != "federation-package/v1" {
 		t.Fatalf("accepts = %v", got["accepts"])
 	}
+}
+
+// TestVersionListsEveryServedRoute: /v1/version is how a client tells a route
+// this instance lacks from a file a party has not hosted. Every listed GET
+// route must be served (never the router's plain 404), and a path the instance
+// does not serve gets the router's plain-text 404, not a JSON error.
+func TestVersionListsEveryServedRoute(t *testing.T) {
+	h := newHarness(t)
+	v := decode(t, h.get("/v1/version"))
+	if v["release"] != httpapi.Release {
+		t.Fatalf("release = %v, want %q", v["release"], httpapi.Release)
+	}
+	routes, _ := v["routes"].([]any)
+	want := map[string]bool{
+		"GET /v1/version": false,
+		"GET /v1/parties/{sovereign_id}/packages/{counterparty}":    false,
+		"DELETE /v1/parties/{sovereign_id}/packages/{counterparty}": false,
+	}
+	for _, r := range routes {
+		rs, _ := r.(string)
+		if _, ok := want[rs]; ok {
+			want[rs] = true
+		}
+		if !strings.HasPrefix(rs, "GET ") {
+			continue
+		}
+		path := strings.NewReplacer("{sovereign_id}", "xaa", "{counterparty}", "xbb").Replace(strings.TrimPrefix(rs, "GET "))
+		resp := h.get(path)
+		if ct := resp.Header.Get("Content-Type"); resp.StatusCode == http.StatusNotFound && strings.HasPrefix(ct, "text/plain") {
+			t.Errorf("%s is listed but answered the router's plain 404", rs)
+		}
+		resp.Body.Close()
+	}
+	for r, seen := range want {
+		if !seen {
+			t.Errorf("routes is missing %q", r)
+		}
+	}
+	resp := h.get("/v1/parties/xaa/not-a-route")
+	mustStatus(t, resp, http.StatusNotFound)
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("unserved path: Content-Type = %q, want the router's text/plain 404", ct)
+	}
+	resp.Body.Close()
 }

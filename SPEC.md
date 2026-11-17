@@ -240,7 +240,12 @@ PUT    /v1/parties/{sovereign_id}/spiffe-bundle
                                             host or replace it; rules above
 GET    /healthz                             liveness
 GET    /v1/spec                             which entry formats this instance accepts
+GET    /v1/version                          release, revision and every route this instance serves
 ```
+
+`/v1/version` lets a client tell the two kinds of 404 apart. A path that is not in its `routes`
+list is a route this instance does not have (an older release); a listed route that answers 404
+returns a JSON body with an `error` field and means the party or file is not there.
 
 Every write carries `X-Saltlick-Key` (except DELETE) and `X-Saltlick-Signature`, an Ed25519
 signature over the request statement: five newline-terminated lines `saltlick-request/v1`, the
