@@ -1,5 +1,10 @@
 # saltlick
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/peering-directory-dark.svg">
+  <img src="docs/figures/peering-directory-light.svg" width="760" alt="saltlick serves a signed pointer record (where a party's signed package is and its SHA-256 digest); the reading party fetches the package and checks its signatures and digest against its own trust store and a key read aloud between the two parties, so being listed grants access to nothing.">
+</picture>
+
 A directory where an organisation publishes its own interconnection capability, so that two
 organisations can check compatibility before they build a link between them. It is modelled on
 PeeringDB, the database internet network operators consult before turning up a BGP session.

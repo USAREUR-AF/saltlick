@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 540" width="880" height="540" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<title id="t">Being listed grants access to nothing</title>
+<desc id="d">saltlick serves a signed saltlick-pointer/v1 record: where a party's signed package is and its SHA-256 digest. The reading party fetches the package and checks its signatures and digest against its own trust store and a key read aloud between the two parties, so the directory is an input to none of the checks. Entries carrying transport_offer, data_offer, cut are refused. With the directory switched off, both parties compose with the same versioned tool and compare one digest.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#7d8590"/></marker></defs>
+<rect width="100%" height="100%" rx="12" fill="#0d1117"/>
+<text x="24" y="38" font-size="20" fill="#e6edf3" text-anchor="start" font-weight="600">Being listed grants access to nothing</text>
+<text x="24" y="62" font-size="14" fill="#9198a1" text-anchor="start">The directory serves a signed pointer. Every check happens at the reading party.</text>
+<rect x="24" y="92" width="196" height="318" rx="8" fill="#161b22" stroke="#3d444d" stroke-width="1"/>
+<text x="40" y="122" font-size="17" fill="#e6edf3" text-anchor="start" font-weight="600" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">xaa</text>
+<text x="40" y="144" font-size="14" fill="#9198a1" text-anchor="start">the publishing party</text>
+<rect x="40" y="166" width="164" height="50" rx="6" fill="#0d1117" stroke="#7d8590" stroke-width="1"/>
+<text x="122" y="188" font-size="14" fill="#e6edf3" text-anchor="middle" font-weight="600">signed package</text>
+<text x="122" y="207" font-size="13" fill="#9198a1" text-anchor="middle">on its own host</text>
+<text x="40" y="248" font-size="14" fill="#e6edf3" text-anchor="start">Signs a pointer to the</text>
+<text x="40" y="267.6" font-size="14" fill="#e6edf3" text-anchor="start">package and PUTs it.</text>
+<text x="40" y="297.2" font-size="14" fill="#9198a1" text-anchor="start">The first write binds its</text>
+<text x="40" y="316.8" font-size="14" fill="#9198a1" text-anchor="start">key: trust on first use,</text>
+<text x="40" y="336.4" font-size="14" fill="#9198a1" text-anchor="start">which proves nothing</text>
+<text x="40" y="356" font-size="14" fill="#9198a1" text-anchor="start">about identity.</text>
+<rect x="252" y="92" width="300" height="318" rx="8" fill="#161b22" stroke="#3d444d" stroke-width="1"/>
+<text x="268" y="122" font-size="17" fill="#e6edf3" text-anchor="start" font-weight="600" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">saltlick</text>
+<text x="268" y="144" font-size="14" fill="#9198a1" text-anchor="start">stores and serves bytes, decides nothing</text>
+<rect x="268" y="160" width="268" height="142" rx="6" fill="#0d1117" stroke="#7d8590" stroke-width="1"/>
+<text x="280" y="180" font-size="13" fill="#9198a1" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">saltlick-pointer/v1</text>
+<text x="280" y="202" font-size="13" fill="#e6edf3" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">sovereign_id</text>
+<text x="280" y="222" font-size="13" fill="#e6edf3" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">package_url</text>
+<text x="280" y="242" font-size="13" fill="#e6edf3" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">package_sha256</text>
+<text x="280" y="262" font-size="13" fill="#e6edf3" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">expires</text>
+<text x="280" y="282" font-size="13" fill="#e6edf3" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">signature</text>
+<text x="268" y="330" font-size="14" fill="#e6edf3" text-anchor="start" font-weight="600">Refused with HTTP 422:</text>
+<text x="268" y="352" font-size="13" fill="#f85149" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">transport_offer  data_offer  cut</text>
+<text x="268" y="374" font-size="14" fill="#9198a1" text-anchor="start">No accounts, no private keys.</text>
+<rect x="584" y="92" width="272" height="318" rx="8" fill="#161b22" stroke="#3d444d" stroke-width="1"/>
+<text x="600" y="122" font-size="17" fill="#e6edf3" text-anchor="start" font-weight="600" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">xab</text>
+<text x="600" y="144" font-size="14" fill="#9198a1" text-anchor="start">the reading party</text>
+<circle cx="611" cy="169" r="10" fill="#8b949e"/>
+<text x="611" y="174" font-size="13" fill="#0d1117" text-anchor="middle" font-weight="600">1</text>
+<text x="630" y="174" font-size="14" fill="#e6edf3" text-anchor="start">GET the pointer from saltlick</text>
+<circle cx="611" cy="198.6" r="10" fill="#8b949e"/>
+<text x="611" y="203.6" font-size="13" fill="#0d1117" text-anchor="middle" font-weight="600">2</text>
+<text x="630" y="203.6" font-size="14" fill="#e6edf3" text-anchor="start">Fetch the package from</text>
+<text x="630" y="223.2" font-size="14" fill="#e6edf3" text-anchor="start">package_url</text>
+<circle cx="611" cy="247.8" r="10" fill="#3fb950"/>
+<text x="611" y="252.8" font-size="13" fill="#0d1117" text-anchor="middle" font-weight="600">3</text>
+<text x="630" y="252.8" font-size="14" fill="#e6edf3" text-anchor="start">Verify the package's</text>
+<text x="630" y="272.4" font-size="14" fill="#e6edf3" text-anchor="start">signatures against its own</text>
+<text x="630" y="292" font-size="14" fill="#e6edf3" text-anchor="start">trust store</text>
+<circle cx="611" cy="316.6" r="10" fill="#3fb950"/>
+<text x="611" y="321.6" font-size="13" fill="#0d1117" text-anchor="middle" font-weight="600">4</text>
+<text x="630" y="321.6" font-size="14" fill="#e6edf3" text-anchor="start">Recompute the package's</text>
+<text x="630" y="341.2" font-size="14" fill="#e6edf3" text-anchor="start">digest and compare it with</text>
+<text x="630" y="360.8" font-size="14" fill="#e6edf3" text-anchor="start">package_sha256</text>
+<text x="600" y="392" font-size="14" fill="#3fb950" text-anchor="start" font-weight="600">Steps 3 and 4 are the checks.</text>
+<line x1="222" y1="262" x2="248" y2="262" stroke="#7d8590" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="236" y="254" font-size="13" fill="#9198a1" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">PUT</text>
+<line x1="554" y1="169" x2="580" y2="169" stroke="#7d8590" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="568" y="161" font-size="13" fill="#9198a1" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">GET</text>
+<path d="M122,412 V444 H218" fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="6 5"/>
+<path d="M586,444 H720 V412" fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="6 5"/>
+<rect x="218" y="426" width="368" height="36" rx="18" fill="#12261e" stroke="#3fb950" stroke-width="1"/>
+<text x="402" y="449" font-size="14" fill="#e6edf3" text-anchor="middle" font-weight="600">The verifying key, read aloud between the parties</text>
+<text x="402" y="488" font-size="14" fill="#9198a1" text-anchor="middle">Out of band, never through the directory: a call to a voice you recognize, a meeting, a courier.</text>
+<line x1="24" y1="504" x2="856" y2="504" stroke="#3d444d" stroke-width="1"/>
+<text x="24" y="526" font-size="14" fill="#e6edf3" text-anchor="start">Switched off, federation still works: both parties compose with the same versioned tool and compare one digest.</text>
+</svg>
