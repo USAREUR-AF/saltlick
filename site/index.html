@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>saltlick</title>
+<meta name="description" content="A directory where an organization publishes its own interconnection capability. Advisory, never authoritative: being listed grants access to nothing.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#top"><img src="assets/icon.svg" width="28" height="28" alt="">saltlick</a>
+    <nav aria-label="Sections">
+      <a href="#what">What it is</a><a href="#refuses">What it refuses</a><a href="#run">Run it</a>
+      <a class="gh" href="https://github.com/USAREUR-AF/saltlick">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<main id="top">
+<section class="hero" aria-labelledby="name">
+<pre class="bgcode" aria-hidden="true">// offerMembers are the blocks a directory entry must never carry.
+//
+// Reachability, release sets and accepted limits are sovereign operational
+// detail. They move directly between two parties, over a channel those two
+// parties chose, and never through a directory that everyone can read. This is
+// not a policy setting and there is no flag to relax it: a directory that
+// carried an offer would be publishing one party's operational posture to every
+// reader, which is a different service from this one.
+var offerMembers = map[string]string{
+	"transport_offer": "reachability -- endpoint, listener role, link subnet, MTU",
+	"data_offer":      "release sets and accepted limits",
+	"cut":             "contact details for severing a peering",
+}</pre>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="prompt">&gt;_ saltlick serve<span class="cur" aria-hidden="true"></span></p>
+      <h1 class="wordmark" id="name">saltlick</h1>
+      <p class="tagline">Advisory, never authoritative. Being listed grants access to nothing.</p>
+      <p class="lede">A directory where an organization publishes its own interconnection capability, so that two organizations can check compatibility before they build a link. It holds signed pointers, not permissions. The reader checks every signature and digest against keys it bound outside the directory.</p>
+      <div class="buttons">
+        <a class="btn star" href="https://github.com/USAREUR-AF/saltlick"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>Star on GitHub</a>
+        <a class="btn" href="#run">Run it</a>
+        <a class="btn" href="https://github.com/USAREUR-AF/saltlick/blob/main/SPEC.md">Specification</a>
+      </div>
+      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-run">make build &amp;&amp; ./saltlick serve -db saltlick.db</code></pre><button class="copy" type="button" data-copy="c-run">Copy</button></div>
+    </div>
+
+    <div class="session" role="img" aria-label="A recorded session against a saltlick instance. A package carrying offers is refused with HTTP 422. Party xaa publishes a signed pointer record and hosts its package: HTTP 201 both times, the key bound on first use. Another key tries to overwrite the entry: HTTP 403. A reader fetches the pointer and the package; the reader, not the directory, recomputes the package's SHA-256 and checks it against the pointer, and checks the signature under the key the two parties read aloud.">
+      <svg class="actors" id="actors" viewBox="0 0 520 112" aria-hidden="true">
+        <path class="aloud" d="M69 66 C 140 96, 380 96, 451 66"/>
+        <text class="aloud-t" x="260" y="105" text-anchor="middle">verifying key, read aloud between the two parties</text>
+        <line class="wire" id="wl" x1="122" y1="38" x2="198" y2="38"/>
+        <line class="wire" id="wr" x1="322" y1="38" x2="398" y2="38"/>
+        <g id="a-party"><rect x="16" y="14" width="106" height="50"/><text x="69" y="35" text-anchor="middle">party xaa</text><text class="sub" x="69" y="53" text-anchor="middle">signs</text></g>
+        <g id="a-dir"><rect x="198" y="14" width="124" height="50"/><text x="260" y="35" text-anchor="middle">saltlick</text><text class="sub" x="260" y="53" text-anchor="middle">stores, serves</text></g>
+        <g id="a-reader"><rect x="398" y="14" width="106" height="50"/><text x="451" y="35" text-anchor="middle">reader</text><text class="sub" x="451" y="53" text-anchor="middle">checks</text></g>
+        <circle class="pkt" id="pkt" r="6" cx="-20" cy="38"/>
+      </svg>
+      <pre class="term" id="term" aria-hidden="true"><span class="cmdl">$ curl -X PUT https://directory.example/v1/parties/xaa \
+    --data-binary @xaa.pointer.signed.json</span>
+<span class="s2">HTTP 201</span>  bound_key VTFghAMPXAcjUb9cFBKCmt7XtJvaCCqw/58I3gpRbS0=  first_use true
+<span class="adv">X-Saltlick-Advisory: advisory only: being listed in this directory grants access to nothing, and this service does not establish that any party is who it claims to be</span></pre>
+      <div class="foot" id="foot">Recorded against a local instance when the page was built; the checks under it run in your browser.</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="numbers">
+      <div><span class="n" data-measure="routes">17</span><span class="l">routes it serves</span><code>curl -s localhost:8080/v1/version</code></div>
+      <div><span class="n" data-measure="cap">64 KiB</span><span class="l">largest body it accepts</span><code>grep MaxBodyBytes internal/httpapi/server.go</code></div>
+      <div><span class="n" data-measure="offers">3</span><span class="l">offer blocks refused with 422</span><code>grep -A5 'offerMembers =' internal/pkgv1/package.go</code></div>
+      <div><span class="n" data-measure="tests">84</span><span class="l">Go tests</span><code>grep -rh '^func Test' --include=*_test.go . | wc -l</code></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="what">
+  <div class="wrap">
+    <h2>What it is</h2>
+    <p class="sub">Modeled on PeeringDB, the database internet network operators consult before turning up a BGP session. Its only job is to stop two competent parties from misconfiguring each other.</p>
+    <p class="invariant">Advisory, never authoritative. Being listed grants access to nothing.</p>
+    <div class="cards">
+      <div class="card"><h3>Pointers, not permissions</h3><p>The expected entry is a signed pointer record: where the party's signed package can be fetched, and that package's SHA-256. A counterparty fetches the package, verifies its signatures against its own trust store, and recomputes the digest. The directory is an input to none of those checks.</p></div>
+      <div class="card"><h3>Writes are trust on first use</h3><p>The first <code>PUT</code> for a <code>sovereign_id</code> binds the key it presents, the same shape as an SSH host key. It stops one party overwriting another's entry and establishes nothing about identity. Parties bind each other's keys over a channel they already trust.</p></div>
+      <div class="card"><h3>Federation works with it switched off</h3><p>Two parties compose independently with the same versioned tool and compare one digest. That needs no server and works with an entirely offline partner. Nothing in the federation mechanism may come to require the directory.</p></div>
+    </div>
+    <figure style="margin:36px auto 0;max-width:820px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/from-tree/peering-directory-dark.svg">
+        <img src="assets/from-tree/peering-directory-light.svg" width="760" alt="saltlick serves a signed pointer record (where a party's signed package is and its SHA-256 digest); the reading party fetches the package and checks its signatures and digest against its own trust store and a key read aloud between the two parties, so being listed grants access to nothing.">
+      </picture>
+      <figcaption>Drawn by <code>docs/figures/make-figures.py</code> from the README and <code>internal/pkgv1/package.go</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="refuses">
+  <div class="wrap feature">
+    <div>
+      <h2>What it refuses</h2>
+      <p>Reachability, release sets, accepted limits and cut procedures are sovereign operational detail. They move directly between two parties, not through a directory that everyone can read. An entry carrying any of the three offer blocks is refused with HTTP 422 and a message saying so. There is no flag to relax it.</p>
+      <p>A pointer record carries exactly six members; anything else, such as a key, an identity, a contact or an offer, is refused with HTTP 422.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Accepted in a recognition-only package</th><th>Refused</th></tr></thead>
+      <tbody>
+        <tr><td><code>spec</code>, <code>sovereign_id</code>, <code>issued</code>, <code>expires</code>, <code>signature</code></td><td><code>transport_offer</code>: willing to connect</td></tr>
+        <tr><td><code>identity</code>: <code>trust_domain</code>, <code>ca_fingerprint</code></td><td><code>data_offer</code>: willing to exchange</td></tr>
+        <tr><td><code>capabilities</code>: <code>transports</code>, <code>fabric_fips_image</code>, <code>pqc_capable</code>, <code>fabric_version</code></td><td><code>cut</code>: contacts</td></tr>
+      </tbody>
+    </table>
+    <h3 style="margin-top:28px">Not built, on purpose</h3>
+    <ul>
+      <li>No ranking, matching or brokering: no "compatible partners" endpoint, no sort, no filter. <code>TestNoRankingOrMatchingEndpointExists</code> enforces it.</li>
+      <li>No accounts, organizations, roles or approval workflow.</li>
+      <li>No enforcement: an expired package is still served, marked <code>X-Saltlick-Expired: true</code>.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section class="band" id="run">
+  <div class="wrap">
+    <h2>Run it</h2>
+    <p class="sub">Go 1.25 to build. The SQLite driver is pure Go, so the binary is static and needs no cgo, no libc and no external database. <code>serve</code> binds <code>127.0.0.1:8080</code>; the expected deployment puts it behind a public TLS proxy or load balancer.</p>
+    <pre class="block">make build                        # ./saltlick
+make check                        # gofmt, go vet, go test: the Go half of CI
+./saltlick serve -db saltlick.db  # binds 127.0.0.1:8080
+
+saltlick keygen -out xaa          # an Ed25519 keypair in the encoding the API expects
+saltlick sign -key xaa.key -package xaa.pointer.json -out xaa.pointer.signed.json</pre>
+    <p><a href="https://github.com/USAREUR-AF/saltlick#publishing-an-entry">Publishing an entry</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick/tree/main/deploy">deploy/: compose and Caddy</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick/tree/main/terraform">terraform/</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick#api">API</a></p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><a href="https://github.com/USAREUR-AF/saltlick">Repository</a><a href="https://github.com/USAREUR-AF/saltlick/blob/main/LICENSE">License</a><a href="https://github.com/USAREUR-AF/saltlick/blob/main/SECURITY.md">Security policy</a></p>
+  </div>
+</footer>
+<script src="assets/hero.js" defer></script>
+</body>
+</html>
