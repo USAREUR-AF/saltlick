@@ -226,7 +226,8 @@ def main():
     if bad:
         return 1
     print("site: numbers match the tree:", ", ".join(f"{k}={v}" for k, v in measured.items()))
-    return 0
+    # no command box cut off at 1440 or 390 px, no output box at 1440 (headless Chrome)
+    return subprocess.run([sys.executable, "-I", os.path.join(SITE, "fitcheck.py"), SITE, "index.html"]).returncode
 
 
 if __name__ == "__main__":

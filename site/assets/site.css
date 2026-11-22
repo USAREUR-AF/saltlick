@@ -57,7 +57,7 @@ code, pre { font-family: var(--mono); }
 .btn.star { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn:hover { border-color: var(--ink); }
 .cmd { display: flex; align-items: stretch; border: 1px solid var(--rule); background: var(--panel); border-radius: 3px; max-width: 640px; }
-.cmd pre { flex: 1; margin: 0; padding: 12px 14px; font-size: 14px; overflow-x: auto; white-space: pre; }
+.cmd pre { flex: 1; margin: 0; padding: 12px 14px; font-size: 14px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 .cmd .dollar { color: var(--good); user-select: none; }
 .copy { border: 0; border-left: 1px solid var(--rule); background: none; color: var(--accent); font: 700 14px var(--mono); padding: 0 16px; cursor: pointer; }
 
@@ -132,5 +132,10 @@ td code { font-size: 13px; overflow-wrap: anywhere; }
 .scroll { overflow-x: auto; }
 .num { font-family: var(--mono); color: var(--accent); font-weight: 700; }
 pre.block { background: var(--code-bg); border: 1px solid var(--rule); padding: 14px; overflow-x: auto; font-size: 14px; border-radius: 3px; }
+/* a command shows whole: it wraps at spaces, continuation lines hang two characters in */
+pre[data-box="command"] { white-space: pre-wrap; overflow-wrap: anywhere; }
+pre .ln { display: block; padding-left: 2ch; text-indent: -2ch; }
+/* a word with a hyphen or slash moves to the next line whole, and breaks only if it alone is wider than the box */
+pre .ln .w { display: inline-block; max-width: 100%; text-indent: 0; }
 footer { border-top: 1px solid var(--rule); padding: 32px 0 48px; color: var(--quiet); font-size: 15px; }
 footer a { margin-right: 18px; }

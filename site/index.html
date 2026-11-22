@@ -45,7 +45,7 @@ var offerMembers = map[string]string{
         <a class="btn" href="#run">Run it</a>
         <a class="btn" href="https://github.com/USAREUR-AF/saltlick/blob/main/SPEC.md">Specification</a>
       </div>
-      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-run">make build &amp;&amp; ./saltlick serve -db saltlick.db</code></pre><button class="copy" type="button" data-copy="c-run">Copy</button></div>
+      <div class="cmd"><pre data-box="command"><span class="ln"><span class="dollar">$ </span><code id="c-run">make build &amp;&amp; <span class="w">./saltlick</span> serve <span class="w">-db</span> saltlick.db</code></span></pre><button class="copy" type="button" data-copy="c-run">Copy</button></div>
     </div>
 
     <div class="session" role="img" aria-label="A recorded session against a saltlick instance. A package carrying offers is refused with HTTP 422. Party xaa publishes a signed pointer record and hosts its package: HTTP 201 both times, the key bound on first use. Another key tries to overwrite the entry: HTTP 403. A reader fetches the pointer and the package; the reader, not the directory, recomputes the package's SHA-256 and checks it against the pointer, and checks the signature under the key the two parties read aloud.">
@@ -125,12 +125,12 @@ var offerMembers = map[string]string{
   <div class="wrap">
     <h2>Run it</h2>
     <p class="sub">Go 1.25 to build. The SQLite driver is pure Go, so the binary is static and needs no cgo, no libc and no external database. <code>serve</code> binds <code>127.0.0.1:8080</code>; the expected deployment puts it behind a public TLS proxy or load balancer.</p>
-    <pre class="block">make build                        # ./saltlick
-make check                        # gofmt, go vet, go test: the Go half of CI
-./saltlick serve -db saltlick.db  # binds 127.0.0.1:8080
-
-saltlick keygen -out xaa          # an Ed25519 keypair in the encoding the API expects
-saltlick sign -key xaa.key -package xaa.pointer.json -out xaa.pointer.signed.json</pre>
+    <pre class="block" data-box="command"><span class="ln">make build                        # <span class="w">./saltlick</span>
+</span><span class="ln">make check                        # gofmt, go vet, go test: the Go half of CI
+</span><span class="ln"><span class="w">./saltlick</span> serve <span class="w">-db</span> saltlick.db  # binds 127.0.0.1:8080
+</span><span class="ln">
+</span><span class="ln">saltlick keygen <span class="w">-out</span> xaa          # an Ed25519 keypair in the encoding the API expects
+</span><span class="ln">saltlick sign <span class="w">-key</span> xaa.key <span class="w">-package</span> xaa.pointer.json <span class="w">-out</span> xaa.pointer.signed.json</span></pre>
     <p><a href="https://github.com/USAREUR-AF/saltlick#publishing-an-entry">Publishing an entry</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick/tree/main/deploy">deploy/: compose and Caddy</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick/tree/main/terraform">terraform/</a> &middot; <a href="https://github.com/USAREUR-AF/saltlick#api">API</a></p>
   </div>
 </section>
