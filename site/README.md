@@ -12,6 +12,7 @@ One static page: no framework, no external requests, no web fonts.
 | `assets/hero.js` | the copy buttons, and the hero: replays `assets/from-tree/session.json` and runs the reader's checks in the browser |
 | `assets/icon.svg` | the page icon |
 | `assets/from-tree/` | git-ignored; written by `build.py`: `session.json` and the README figure from `docs/figures/` |
+| `fitcheck.py` | run by `build.py`: fails when a command box is cut off at 1440 or 390 px |
 | `build.py` | builds saltlick, records the session, copies the figure and checks the page against the tree |
 
 ## Preview
@@ -60,3 +61,7 @@ it and fails if the page says something else.
 | `cap` | largest body it accepts | `const MaxBodyBytes = N << 10` in `internal/httpapi/server.go` |
 | `offers` | offer blocks refused with 422 | members of `offerMembers` in `internal/pkgv1/package.go` |
 | `tests` | Go tests | functions starting `func Test` in every `*_test.go` |
+
+## Command and output boxes
+
+Every `<pre>` on the page is marked `data-box="command"` or `data-box="output"`. A command box shows the whole command at any width: it wraps at spaces, each line of it a `<span class="ln">` with a hanging indent, and Copy copies the exact text. An output box may scroll inside its box on a narrow screen, and its caption says so. `build.py` ends by running `fitcheck.py`, which loads the page in headless Chrome at 1440 and 390 px wide and fails when a box is cut off.
