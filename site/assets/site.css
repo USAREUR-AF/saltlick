@@ -49,6 +49,7 @@ code, pre { font-family: var(--mono); }
 @keyframes blink { 50% { opacity: 0; } }
 .wordmark { font: 900 clamp(44px, 5.9vw, 84px)/1.02 var(--mono); letter-spacing: -0.04em; margin: 0; white-space: nowrap; }
 .tagline { font-weight: 700; font-size: clamp(19px, 1.9vw, 25px); line-height: 1.3; color: var(--accent); margin: 14px 0 10px; }
+.tagnote { font: 600 14px var(--mono); color: var(--quiet); margin: -4px 0 14px; }
 .lede { color: var(--quiet); margin: 0 0 24px; max-width: 38em; }
 .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border: 1px solid var(--rule); background: var(--panel);
