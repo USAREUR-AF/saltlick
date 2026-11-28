@@ -213,7 +213,7 @@ func TestHostedPackageRefusals(t *testing.T) {
 		"another party's package": fullPackage(t, k, "xab"),
 		"not canonical":           append([]byte(" "), canonicalPkg...),
 		"wrong spec": testsupport.Sign(t, k, strings.Replace(
-			testsupport.DirectoryEntry("xaa", "2026-09-05", "2026-12-05"), "federation-package/v1", "federation-package/v2", 1)),
+			testsupport.DirectoryEntry("xaa", "2026-09-05", "2026-12-05"), "federation-package/v1", "federation-package/v3", 1)),
 		"not a package": []byte(`"xaa"`),
 		"unsigned":      []byte(`{"sovereign_id":"xaa","spec":"federation-package/v1"}`),
 	}
@@ -304,5 +304,107 @@ func TestHostedUploadsSpendTheWriteBudget(t *testing.T) {
 	}
 	if rec := do(h, "PUT", "/v1/parties/xaa/package", "192.0.2.9:4000", nil); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("upload past the write burst = %d, want 429", rec.Code)
+	}
+}
+
+// packageV2 is fullPackage as federation-package/v2 (goat ADR 1242): v1 with
+// spec changed and identity.ca_fingerprint_next, the next CA the party announces.
+func packageV2(t *testing.T, k testsupport.Key, id string) []byte {
+	t.Helper()
+	unsigned := strings.TrimSuffix(strings.TrimSpace(testsupport.DirectoryEntry(id, "2026-09-05", "2026-12-05")), "}") +
+		`, "transport_offer": {"kind": "wireguard", "listener": false}}`
+	unsigned = strings.Replace(unsigned, `"federation-package/v1"`, `"federation-package/v2"`, 1)
+	unsigned = strings.Replace(unsigned, `"ca_fingerprint":`,
+		`"ca_fingerprint_next": "sha256:`+strings.Repeat("ab", 32)+`", "ca_fingerprint":`, 1)
+	return testsupport.Sign(t, k, unsigned)
+}
+
+// A v2 package is hosted and served byte for byte, in the single slot and in a
+// counterparty slot, as a v1 package is; the directory reads neither's identity.
+func TestHostedPackageV2RoundTripsByteForByteInBothSlots(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "hosted-package-v2")
+	withEntry(t, h, k, "xaa")
+	pkg := packageV2(t, k, "xaa")
+	if !bytes.Contains(pkg, []byte(`"federation-package/v2"`)) || !bytes.Contains(pkg, []byte("ca_fingerprint_next")) {
+		t.Fatalf("not a v2 package: %s", pkg)
+	}
+	for _, kind := range []string{"package", "packages/xab"} {
+		resp := h.host("xaa", kind, k, pkg)
+		mustStatus(t, resp, http.StatusCreated)
+		resp.Body.Close()
+		got := h.get("/v1/parties/xaa/" + kind)
+		mustStatus(t, got, http.StatusOK)
+		if b := body(t, got); !bytes.Equal(b, pkg) {
+			t.Fatalf("%s: v2 package not served byte for byte:\n got %s\nwant %s", kind, b, pkg)
+		}
+	}
+}
+
+// A package of a version no goat release defines is still refused, in both slots.
+func TestHostedPackageOfAnotherVersionIsRefused(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "hosted-package-v3")
+	withEntry(t, h, k, "xaa")
+	for _, spec := range []string{"federation-package/v3", "federation-package/v0", "saltlick-pointer/v1"} {
+		b := testsupport.Sign(t, k, strings.Replace(strings.TrimSuffix(strings.TrimSpace(
+			testsupport.DirectoryEntry("xaa", "2026-09-05", "2026-12-05")), "}")+`}`, "federation-package/v1", spec, 1))
+		for _, kind := range []string{"package", "packages/xab"} {
+			resp := h.host("xaa", kind, k, b)
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Errorf("%s in %s: status %d, want 422; %s", spec, kind, resp.StatusCode, body(t, resp))
+				continue
+			}
+			if msg := string(body(t, resp)); !strings.Contains(msg, "federation-package/v2") {
+				t.Errorf("%s in %s: the refusal does not name what is hosted: %s", spec, kind, msg)
+			}
+		}
+	}
+}
+
+// A v2 package is checked to the same standard as a v1 package, through the
+// same checks: canonical form, the package's own signature under the entry's
+// bound key, the sovereign_id of the path. Hosting byte for byte never means a
+// v2 package goes unchecked; each refusal answers v1 and v2 alike.
+func TestHostedPackageV2IsCheckedAsV1Is(t *testing.T) {
+	h := newHarness(t)
+	k := testsupport.NewKey(t, "hosted-v2-checks")
+	other := testsupport.NewKey(t, "hosted-v2-other-signer")
+	withEntry(t, h, k, "xaa")
+	withEntry(t, h, k, "xab")
+	for name, build := range map[string]func(testsupport.Key, string) []byte{
+		"v1": func(sk testsupport.Key, id string) []byte { return fullPackage(t, sk, id) },
+		"v2": func(sk testsupport.Key, id string) []byte { return packageV2(t, sk, id) },
+	} {
+		// The package signed by another key than the entry's: the upload itself is
+		// signed by the bound key, so only the package's own signature is wrong.
+		forged := build(other, "xaa")
+		for _, kind := range []string{"package", "packages/xab"} {
+			resp := h.host("xaa", kind, k, forged)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("%s in %s, signed by another key: status %d, want 403; %s", name, kind, resp.StatusCode, body(t, resp))
+				continue
+			}
+			if msg := string(body(t, resp)); !strings.Contains(msg, "package signature") {
+				t.Errorf("%s in %s: the refusal does not name the package signature: %s", name, kind, msg)
+			}
+			if got := h.get("/v1/parties/xaa/" + kind); got.StatusCode != http.StatusNotFound {
+				t.Errorf("%s in %s: a refused package is served (status %d)", name, kind, got.StatusCode)
+			} else {
+				got.Body.Close()
+			}
+		}
+		// Not in canonical form: refused before anything else, as v1 is.
+		resp := h.host("xaa", "package", k, append([]byte(" "), build(k, "xaa")...))
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s not canonical: status %d, want 422", name, resp.StatusCode)
+		}
+		resp.Body.Close()
+		// Another party's package in this party's slot.
+		resp = h.host("xaa", "package", k, build(k, "xab"))
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s naming another party: status %d, want 422", name, resp.StatusCode)
+		}
+		resp.Body.Close()
 	}
 }
